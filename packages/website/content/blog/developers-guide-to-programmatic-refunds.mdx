@@ -1,7 +1,7 @@
 ---
 title: "The Developer's Guide to Programmatic Refunds"
-description: "Everything developers need to know about building programmatic refund flows: lifecycle, idempotency, webhooks, testing, and monitoring."
-date: "2024-01-03T10:00:00.000Z"
+description: "A comprehensive guide covering the refund lifecycle, idempotency patterns, webhook handling, testing strategies, monitoring, and best practices for building reliable refund systems."
+date: "2024-01-18T10:00:00.000Z"
 author: "RefundKit Team"
 tags: ["guide", "sdk", "best-practices"]
 slug: "developers-guide-to-programmatic-refunds"
@@ -9,659 +9,784 @@ slug: "developers-guide-to-programmatic-refunds"
 
 ## Introduction
 
-Processing a refund seems simple on the surface. Call an API, the money goes back. But production refund systems are full of subtlety. What happens when the network drops midway through a refund request? How do you prevent a retry from creating a duplicate refund? How do you know when a refund that was "processing" an hour ago has actually completed? What does your test suite look like when every test involves actual money?
+Processing refunds sounds simple until you actually build it. You call an API, money goes back to the customer, done. Except it is not done, because refunds involve distributed systems, asynchronous state machines, financial regulations, and edge cases that can cost you real money when they go wrong.
 
-These are the questions that separate a prototype refund integration from a production-grade one. If you have built payment integrations before, you know that the devil is in the details. Refunds have their own set of details that deserve careful attention.
+A double refund because your retry logic did not handle idempotency correctly. A stuck refund because you did not process a webhook. A customer claiming they never received a refund because your status page showed stale data. A compliance audit you cannot pass because your refund records are incomplete.
 
-This guide covers the full lifecycle of programmatic refunds: from the moment a refund is requested to long after it has been completed. We will cover the refund state machine, idempotency patterns, webhook handling, testing strategies, monitoring, and the best practices that keep refund systems reliable at scale.
+This guide covers the full lifecycle of programmatic refunds -- from the moment a refund is initiated to the moment the customer sees the money back in their account. It is written for developers who are building refund flows into their applications, whether through a unified refund layer like RefundKit or directly against payment processor APIs.
 
 ## The Refund Lifecycle
 
-Every refund moves through a series of states. Understanding this lifecycle is the foundation for building robust refund integrations.
+A refund is not a single event. It is a state machine with multiple transitions, some of which happen synchronously (within your API call) and others asynchronously (minutes, hours, or days later via webhooks).
 
-### State Machine
+### States
 
-A refund typically moves through these states:
+A typical refund passes through these states:
 
 ```
-[Created] -> [Pending] -> [Processing] -> [Completed]
-                |              |
-                v              v
-           [Cancelled]      [Failed]
+created -> processing -> succeeded
+                     \-> failed
+                     \-> requires_approval -> approved -> processing -> succeeded
+                                          \-> rejected
 ```
 
-Here is what each state means:
+- **created**: The refund request has been received and validated, but not yet sent to the payment processor.
+- **processing**: The refund has been submitted to the payment processor and is being executed.
+- **succeeded**: The processor has confirmed the refund. The money is on its way back (though the customer might not see it for days).
+- **failed**: The processor rejected the refund. Common reasons include insufficient balance, invalid charge, or the charge being too old to refund.
+- **requires_approval**: The refund exceeded a threshold and needs manual approval before processing.
+- **approved / rejected**: The outcome of the manual approval step.
 
-- **Pending**: The refund has been created in the system but has not yet been submitted to the payment processor. This is the initial state.
-- **Processing**: The refund has been submitted to the payment processor and is awaiting confirmation. Depending on the processor, this state can last from seconds to days.
-- **Completed**: The payment processor has confirmed the refund. The money is on its way back to the customer (though the customer may not see it for 5-10 business days depending on their bank).
-- **Failed**: The refund could not be processed. Common reasons include insufficient funds in the merchant's account, the original charge being too old, or the payment method being invalid.
-- **Cancelled**: The refund was cancelled before it was completed, either by a human or an agent.
+Understanding these states matters because your application needs to handle each one. A refund in `processing` is not the same as a refund that `succeeded` -- if you tell the customer "your refund has been processed" when it is still in `processing`, you might have to retract that statement if it fails.
 
-In code, the RefundKit SDK represents these states as a union type:
+### Initiating a Refund
 
-```typescript
-type RefundStatus =
-  | 'pending'
-  | 'processing'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-```
-
-### Creating a Refund
-
-The starting point is creating a refund with the required parameters:
+Here is what a basic refund initiation looks like:
 
 ```typescript
 import RefundKit from '@refundkit/sdk';
 
-const rk = new RefundKit({
-  apiKey: process.env.REFUNDKIT_API_KEY,
-});
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
 
-const { data: refund, error } = await rk.refunds.create({
-  transactionId: 'ch_1abc2def3ghi',
-  amount: 4999,           // $49.99 in cents
-  reason: 'product_defective',
-  currency: 'usd',        // optional, defaults to 'usd'
-  metadata: {              // optional, arbitrary key-value pairs
-    orderId: 'order_123',
-    customerId: 'cust_456',
-    supportTicket: 'ticket_789',
-  },
-});
+async function initiateRefund(
+  transactionId: string,
+  amount?: number,
+  reason?: string
+) {
+  try {
+    const refund = await rk.refunds.create({
+      transactionId,
+      amount,      // Omit for full refund
+      reason,      // 'customer_request' | 'duplicate' | 'fraudulent' | 'product_issue'
+      metadata: {
+        initiatedBy: 'support-dashboard',
+        ticketId: 'ticket_abc123'
+      }
+    });
 
-if (error) {
-  console.error(`Refund creation failed: [${error.code}] ${error.message}`);
-  // Handle specific error codes
-  return;
+    console.log(`Refund ${refund.id} created with status: ${refund.status}`);
+    return refund;
+  } catch (error) {
+    if (error instanceof RefundKit.PolicyViolationError) {
+      // The refund was rejected by your policy rules
+      console.error(`Policy violation: ${error.code} - ${error.message}`);
+    } else if (error instanceof RefundKit.ProcessorError) {
+      // The payment processor rejected the refund
+      console.error(`Processor error: ${error.processorCode} - ${error.message}`);
+    } else {
+      // Network error, timeout, or unexpected failure
+      console.error('Unexpected error:', error);
+    }
+    throw error;
+  }
 }
-
-console.log(`Refund created: ${refund.id}, status: ${refund.status}`);
 ```
 
-A few things to note about this call:
-
-**Amounts are in smallest currency units.** For USD, this means cents. $49.99 is `4999`. This avoids floating-point precision issues that plague systems using decimal amounts.
-
-**Reason codes are enumerated.** The SDK accepts a specific set of reason codes: `product_not_received`, `product_defective`, `wrong_product`, `duplicate_charge`, `subscription_cancelled`, and `other`. Using structured reason codes rather than free-text strings enables analytics, policy enforcement, and processor-level categorization.
-
-**Metadata is your escape hatch.** The metadata field accepts arbitrary key-value pairs. Use it to attach context that is relevant to your application: order IDs, customer IDs, support ticket numbers, agent identifiers, or any other reference data. This metadata is stored with the refund and returned in all subsequent queries.
-
-**The response uses a `{ data, error }` pattern.** Rather than throwing exceptions, the SDK returns a structured response. This makes error handling explicit and avoids the try/catch overhead for expected error conditions like validation failures.
-
-### Tracking Refund Status
-
-After creating a refund, you need to track its progress. There are two approaches: polling and webhooks. We will cover webhooks in a dedicated section below. For polling:
-
-```typescript
-const { data: refund, error } = await rk.refunds.get('ref_abc123');
-
-if (error) {
-  console.error(`Failed to fetch refund: ${error.message}`);
-  return;
-}
-
-console.log(`Refund ${refund.id}: ${refund.status}`);
-console.log(`Processor: ${refund.processor}`);
-console.log(`External ID: ${refund.externalRefundId}`);
-console.log(`Created: ${refund.createdAt}`);
-console.log(`Updated: ${refund.updatedAt}`);
-```
-
-For bulk monitoring, use the list endpoint with filters:
-
-```typescript
-// Get all processing refunds
-const { data: processingRefunds } = await rk.refunds.list({
-  status: 'processing',
-  limit: 100,
-  offset: 0,
-});
-
-// Get all Stripe refunds
-const { data: stripeRefunds } = await rk.refunds.list({
-  processor: 'stripe',
-  limit: 50,
-});
-
-// Get all failed refunds for investigation
-const { data: failedRefunds } = await rk.refunds.list({
-  status: 'failed',
-  limit: 25,
-});
-```
+Notice the explicit error handling with typed errors. This is not optional. Refund failures need different treatment depending on the cause. A policy violation means the refund should not happen (do not retry). A processor error might be transient (retry might help) or permanent (do not retry). A network error is almost certainly transient (retry after backoff).
 
 ## Idempotency
 
-Idempotency is the single most important property of a refund system. Without it, network failures, retries, and race conditions can result in double refunds -- one of the most painful bugs in payments engineering.
+Idempotency is the single most important concept in refund processing. An idempotent operation produces the same result whether you call it once or ten times. For refunds, this means: if you accidentally submit the same refund request twice, only one refund should be created.
 
-### The Problem
+### Why Idempotency Matters
 
 Consider this sequence of events:
 
-1. Your application sends a refund request to the API
-2. The API receives the request and processes the refund
-3. The API sends back a success response
-4. The network drops the response before your application receives it
-5. Your application sees a timeout error and retries the request
-6. The API receives the retry and processes a second refund
+1. Your server sends a refund request to the payment processor.
+2. The processor receives the request and starts processing the refund.
+3. The network connection drops before your server receives the response.
+4. Your server does not know if the refund was created or not.
+5. Your retry logic sends the same request again.
+6. Without idempotency, the processor creates a second refund.
 
-The customer gets refunded twice. Your company loses money. Your CFO is unhappy.
+The customer gets refunded twice. You lose money. This is not a theoretical scenario -- it happens in production systems regularly, especially under load or during processor outages.
 
-### The Solution
+### Implementing Idempotency
 
-Idempotency ensures that processing the same request twice produces the same result as processing it once. There are several layers where idempotency can be enforced:
+There are two approaches to idempotency: client-side idempotency keys and server-side deduplication.
 
-**Transaction-level deduplication.** Before creating a new refund, check if one already exists for the same transaction. If a non-failed refund exists for the same transaction with the same amount, return the existing refund instead of creating a new one:
+**Client-side idempotency keys** are unique identifiers you generate for each refund request and send along with the request. If the server receives two requests with the same idempotency key, it returns the result of the first request without processing a second refund.
 
 ```typescript
-async function processRefundIdempotently(
-  rk: RefundKit,
-  params: CreateRefundParams,
-): Promise<Refund> {
-  // Check for existing refund on this transaction
-  const { data: existing } = await rk.refunds.list({
-    // In production, you would filter by transactionId on the server side
-    limit: 100,
-  });
+import { randomUUID } from 'crypto';
 
-  const duplicate = existing?.find(
-    r =>
-      r.transactionId === params.transactionId &&
-      r.amount === params.amount &&
-      r.status !== 'failed' &&
-      r.status !== 'cancelled'
+async function safeRefund(transactionId: string, amount: number) {
+  // Generate a deterministic idempotency key from the refund parameters
+  // Using a hash ensures the same logical refund always gets the same key
+  const idempotencyKey = generateDeterministicKey(transactionId, amount);
+
+  const refund = await rk.refunds.create(
+    {
+      transactionId,
+      amount,
+      reason: 'customer_request'
+    },
+    {
+      idempotencyKey
+    }
   );
 
-  if (duplicate) {
-    console.log(`Returning existing refund: ${duplicate.id}`);
-    return duplicate;
-  }
-
-  const { data: refund, error } = await rk.refunds.create(params);
-  if (error) throw error;
   return refund;
 }
-```
 
-**Client-side request tracking.** Maintain a local record of in-flight requests. Before sending a request, check if an identical request is already pending. This prevents retries from creating duplicate requests at the application level:
-
-```typescript
-const pendingRefunds = new Map<string, Promise<Refund>>();
-
-async function createRefundOnce(params: CreateRefundParams): Promise<Refund> {
-  const key = `${params.transactionId}:${params.amount}:${params.reason}`;
-
-  if (pendingRefunds.has(key)) {
-    return pendingRefunds.get(key);
-  }
-
-  const promise = rk.refunds.create(params).then(({ data, error }) => {
-    pendingRefunds.delete(key);
-    if (error) throw error;
-    return data;
-  });
-
-  pendingRefunds.set(key, promise);
-  return promise;
+function generateDeterministicKey(
+  transactionId: string,
+  amount: number
+): string {
+  const crypto = require('crypto');
+  return crypto
+    .createHash('sha256')
+    .update(`refund:${transactionId}:${amount}:${Date.now().toString().slice(0, -4)}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 ```
 
-**Database-level constraints.** At the persistence layer, use unique constraints to prevent duplicate refunds from being stored even if the application-level checks fail. This is your last line of defense.
+A subtlety with deterministic keys: the key should be deterministic enough that retries of the same logical operation produce the same key, but unique enough that two legitimately different refunds for the same transaction do not collide. Including a truncated timestamp (grouped by 10-second windows, for example) handles the case where a customer legitimately requests a second partial refund later.
+
+**Server-side deduplication** is handled by the refund infrastructure. RefundKit, for example, automatically deduplicates refund requests that match on transaction ID, amount, and timing. If you submit two identical refund requests within a short window, the second one returns the result of the first.
+
+```typescript
+// RefundKit handles deduplication automatically
+// These two calls (if made in quick succession) will only create one refund
+const refund1 = await rk.refunds.create({
+  transactionId: 'txn_abc123',
+  amount: 2500,
+  reason: 'customer_request'
+});
+
+const refund2 = await rk.refunds.create({
+  transactionId: 'txn_abc123',
+  amount: 2500,
+  reason: 'customer_request'
+});
+
+// refund1.id === refund2.id (same refund, not a duplicate)
+```
+
+In practice, you should use both approaches. Client-side idempotency keys give you explicit control, and server-side deduplication provides a safety net.
 
 ## Webhook Handling
 
-Polling is straightforward but inefficient. For production systems, webhooks provide real-time notifications when refund status changes.
+Refund status changes happen asynchronously. You submit a refund, get back a `processing` status, and later the processor confirms it succeeded (or failed). The mechanism for receiving these asynchronous updates is webhooks.
 
-### Setting Up a Webhook Endpoint
+### Setting Up Webhook Endpoints
 
-A webhook endpoint receives POST requests from the refund system with the current state of the refund. Here is a robust implementation:
+A webhook endpoint is an HTTP endpoint in your application that receives POST requests from the refund system when events occur. Here is a production-quality webhook handler:
 
 ```typescript
-import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
+import express from 'express';
+import RefundKit from '@refundkit/sdk';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+const app = express();
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
 
-export async function POST(request: NextRequest) {
-  const signature = request.headers.get('stripe-signature');
+// IMPORTANT: Use raw body for signature verification
+app.post(
+  '/webhooks/refundkit',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    // Step 1: Verify the webhook signature
+    const signature = req.headers['refundkit-signature'] as string;
+    let event;
 
-  if (!signature) {
-    return NextResponse.json(
-      { error: 'Missing stripe-signature header' },
-      { status: 400 },
-    );
+    try {
+      event = rk.webhooks.verify(
+        req.body,
+        signature,
+        process.env.REFUNDKIT_WEBHOOK_SECRET!
+      );
+    } catch (err) {
+      console.error('Webhook verification failed:', err);
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    // Step 2: Process the event idempotently
+    const processed = await hasEventBeenProcessed(event.id);
+    if (processed) {
+      // Already handled this event -- return 200 so it is not retried
+      return res.status(200).json({ received: true, duplicate: true });
+    }
+
+    // Step 3: Handle the event
+    try {
+      await handleRefundEvent(event);
+      await markEventAsProcessed(event.id);
+    } catch (err) {
+      console.error(`Failed to handle event ${event.id}:`, err);
+      // Return 500 so the webhook is retried
+      return res.status(500).json({ error: 'Processing failed' });
+    }
+
+    // Step 4: Acknowledge receipt
+    res.status(200).json({ received: true });
   }
+);
 
-  let event: Stripe.Event;
-
-  try {
-    const body = await request.text();
-    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return NextResponse.json(
-      { error: 'Invalid signature' },
-      { status: 400 },
-    );
-  }
-
+async function handleRefundEvent(event: RefundKitEvent) {
   switch (event.type) {
-    case 'charge.refund.updated': {
-      const refund = event.data.object as Stripe.Refund;
-      await handleRefundUpdate(refund);
+    case 'refund.succeeded': {
+      const refund = event.data;
+      // Update your order management system
+      await updateOrderRefundStatus(refund.metadata.orderId, 'refunded');
+      // Send confirmation to customer
+      await sendRefundConfirmationEmail(refund);
+      // Update accounting records
+      await createAccountingEntry(refund);
       break;
     }
-    case 'charge.refunded': {
-      const charge = event.data.object as Stripe.Charge;
-      await handleChargeRefunded(charge);
+
+    case 'refund.failed': {
+      const refund = event.data;
+      // Alert the support team
+      await notifySupport({
+        type: 'refund_failed',
+        refundId: refund.id,
+        reason: refund.failureReason,
+        transactionId: refund.transactionId
+      });
+      // Update order status
+      await updateOrderRefundStatus(refund.metadata.orderId, 'refund_failed');
       break;
     }
-    default:
-      console.log(`Unhandled event type: ${event.type}`);
-  }
 
-  return NextResponse.json({ received: true });
-}
-
-async function handleRefundUpdate(refund: Stripe.Refund): Promise<void> {
-  // Update the refund status in your database
-  await db.refund.update({
-    where: { externalRefundId: refund.id },
-    data: {
-      status: mapStripeStatus(refund.status),
-      updatedAt: new Date().toISOString(),
-    },
-  });
-
-  // Notify the customer if the refund completed or failed
-  if (refund.status === 'succeeded') {
-    await notifyCustomer(refund, 'Your refund has been processed successfully.');
-  } else if (refund.status === 'failed') {
-    await notifyCustomer(refund, 'There was an issue with your refund. Our team is looking into it.');
-    await alertOpsTeam(refund);
+    case 'refund.requires_approval': {
+      const refund = event.data;
+      // Send approval request to finance team
+      await createApprovalRequest({
+        refundId: refund.id,
+        amount: refund.amount,
+        currency: refund.currency,
+        reason: refund.reason,
+        requestedBy: refund.metadata.initiatedBy
+      });
+      break;
+    }
   }
 }
 ```
 
-### Webhook Best Practices
+### Critical Webhook Patterns
 
-**Always verify signatures.** Never process a webhook without verifying its cryptographic signature. Without verification, anyone who discovers your webhook URL can send fake events.
+Several patterns are essential for reliable webhook processing:
 
-**Respond quickly, process asynchronously.** Webhook providers expect a response within a few seconds. If your processing logic takes longer, acknowledge the webhook immediately and process the event asynchronously:
+**Signature verification is mandatory.** Without it, anyone who discovers your webhook URL can send fake events. The signature proves the webhook came from RefundKit and has not been tampered with. Never skip this step, even in development.
+
+**Idempotent event processing.** Webhooks can be delivered more than once. If your handler creates an accounting entry on `refund.succeeded`, it must not create a duplicate entry if the same event is delivered twice. Track processed event IDs and skip duplicates.
+
+**Return quickly, process asynchronously.** Webhook endpoints have timeout limits (typically 5-30 seconds). If your handler needs to do slow operations (sending emails, updating external systems), acknowledge the webhook immediately and process the event asynchronously through a job queue:
 
 ```typescript
-export async function POST(request: NextRequest) {
-  // Verify signature...
+app.post(
+  '/webhooks/refundkit',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const event = rk.webhooks.verify(
+      req.body,
+      req.headers['refundkit-signature'] as string,
+      process.env.REFUNDKIT_WEBHOOK_SECRET!
+    );
 
-  // Acknowledge immediately
-  await queue.enqueue('process_webhook', { eventId: event.id, payload: event });
+    // Enqueue for async processing and respond immediately
+    await jobQueue.enqueue('process-refund-webhook', { event });
 
-  return NextResponse.json({ received: true });
-}
+    res.status(200).json({ received: true });
+  }
+);
 ```
 
-**Handle out-of-order delivery.** Webhooks can arrive out of order. A "completed" event might arrive before the "processing" event. Use the refund's `updatedAt` timestamp to determine the correct order and ignore stale updates:
-
-```typescript
-async function handleRefundUpdate(refund: Stripe.Refund): Promise<void> {
-  const existing = await db.refund.findUnique({
-    where: { externalRefundId: refund.id },
-  });
-
-  if (!existing) {
-    console.warn(`Received webhook for unknown refund: ${refund.id}`);
-    return;
-  }
-
-  // Only update if this event is newer
-  const eventTime = new Date(refund.created * 1000);
-  const existingTime = new Date(existing.updatedAt);
-
-  if (eventTime <= existingTime) {
-    console.log(`Ignoring stale webhook for refund: ${refund.id}`);
-    return;
-  }
-
-  await db.refund.update({
-    where: { id: existing.id },
-    data: {
-      status: mapStripeStatus(refund.status),
-      updatedAt: eventTime.toISOString(),
-    },
-  });
-}
-```
-
-**Implement idempotent webhook handling.** Webhook providers retry on failure, so you may receive the same event multiple times. Use the event ID to deduplicate:
-
-```typescript
-async function processWebhook(event: Stripe.Event): Promise<void> {
-  // Check if we have already processed this event
-  const processed = await db.webhookEvent.findUnique({
-    where: { eventId: event.id },
-  });
-
-  if (processed) {
-    console.log(`Already processed event: ${event.id}`);
-    return;
-  }
-
-  // Process the event...
-
-  // Mark as processed
-  await db.webhookEvent.create({
-    data: { eventId: event.id, processedAt: new Date().toISOString() },
-  });
-}
-```
+**Handle webhook retries gracefully.** If your endpoint returns a 5xx status code, the webhook will be retried with exponential backoff. Design your handler so that retries are safe (back to idempotency) and helpful (they recover from transient failures).
 
 ## Testing with Test Keys
 
-Testing refund flows requires a strategy that lets you exercise the full lifecycle without involving real money.
+Testing refund flows against live payment processors is expensive and slow. Test keys let you simulate the full refund lifecycle without moving real money.
 
-### Test Mode vs Live Mode
+### Setting Up Test Mode
 
-RefundKit supports separate test and live API keys. Test keys (`rk_test_...`) connect to a sandbox environment where refunds are simulated:
+RefundKit test keys (prefixed with `rk_test_`) connect to sandboxed versions of payment processors. Transactions, refunds, and webhooks all work the same way as production, but no real charges or refunds are processed.
 
 ```typescript
-// Test environment
-const rkTest = new RefundKit({
-  apiKey: 'rk_test_abc123',
+// Test environment setup
+const rk = new RefundKit({
+  apiKey: 'rk_test_your_test_key',
 });
 
-// Live environment
-const rkLive = new RefundKit({
-  apiKey: 'rk_live_xyz789',
+// Create a test transaction to refund
+const transaction = await rk.transactions.create({
+  amount: 9999,    // $99.99
+  currency: 'usd',
+  processor: 'stripe',
+  customerId: 'cust_test_001',
+  metadata: { orderId: 'test_order_001' }
 });
 ```
 
-In test mode:
-- Refunds are created but not submitted to payment processors
-- Status transitions are simulated
-- Webhooks can be triggered manually for testing
-- No real money moves
+### Simulating Edge Cases
 
-### Unit Testing with the SDK
-
-For unit tests, you can mock the RefundKit client to test your application logic without making API calls:
+Test mode supports special values that trigger specific behaviors, useful for testing error handling:
 
 ```typescript
-import { describe, it, expect, vi } from 'vitest';
+// Simulate a refund that fails
+const failingRefund = await rk.refunds.create({
+  transactionId: 'txn_test_force_fail',  // Special test transaction ID
+  amount: 5000,
+  reason: 'customer_request'
+});
+// Returns a refund with status: 'failed'
 
-// Mock the SDK
-vi.mock('@refundkit/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    refunds: {
-      create: vi.fn(),
-      get: vi.fn(),
-      list: vi.fn(),
-      cancel: vi.fn(),
-    },
-    policies: {
-      check: vi.fn(),
-    },
-  })),
-}));
+// Simulate a refund that takes time to process
+const slowRefund = await rk.refunds.create({
+  transactionId: 'txn_test_slow_process',
+  amount: 5000,
+  reason: 'customer_request'
+});
+// Returns status: 'processing', webhook fires after 30 seconds
 
+// Simulate a refund that requires approval
+const approvalRefund = await rk.refunds.create({
+  transactionId: 'txn_test_needs_approval',
+  amount: 50000,  // Large amount triggers approval
+  reason: 'customer_request'
+});
+// Returns status: 'requires_approval'
+```
+
+### Writing Automated Tests
+
+Your test suite should cover the happy path, error cases, and edge cases:
+
+```typescript
+import { describe, it, expect, beforeAll } from 'vitest';
 import RefundKit from '@refundkit/sdk';
-import { processCustomerRefund } from '../src/refund-service';
 
-describe('RefundService', () => {
-  it('should check policy before processing refund', async () => {
-    const rk = new RefundKit({ apiKey: 'rk_test_mock' });
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_TEST_KEY! });
 
-    // Mock policy check -- eligible
-    (rk.policies.check as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: {
-        eligible: true,
-        reason: 'Within return window',
-        maxAmount: 9999,
-        deadline: '2024-02-15T00:00:00.000Z',
-        conditions: [],
-      },
-      error: null,
+describe('Refund Flow', () => {
+  let testTransaction: Transaction;
+
+  beforeAll(async () => {
+    testTransaction = await rk.transactions.create({
+      amount: 10000,
+      currency: 'usd',
+      customerId: 'cust_test_integration',
+      metadata: { orderId: 'test_order_integration' }
     });
-
-    // Mock refund creation
-    (rk.refunds.create as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: {
-        id: 'ref_test_001',
-        status: 'pending',
-        amount: 4999,
-        transactionId: 'tx_test_001',
-        reason: 'product_defective',
-        processor: 'stripe',
-        initiatedBy: 'api',
-        createdAt: '2024-01-15T10:00:00.000Z',
-        updatedAt: '2024-01-15T10:00:00.000Z',
-      },
-      error: null,
-    });
-
-    const result = await processCustomerRefund(rk, {
-      transactionId: 'tx_test_001',
-      amount: 4999,
-      reason: 'product_defective',
-    });
-
-    expect(rk.policies.check).toHaveBeenCalledWith({
-      transactionId: 'tx_test_001',
-      amount: 4999,
-    });
-    expect(rk.refunds.create).toHaveBeenCalled();
-    expect(result.id).toBe('ref_test_001');
   });
 
-  it('should reject refund when policy is not eligible', async () => {
-    const rk = new RefundKit({ apiKey: 'rk_test_mock' });
+  it('should process a full refund', async () => {
+    const refund = await rk.refunds.create({
+      transactionId: testTransaction.id,
+      reason: 'customer_request'
+    });
 
-    (rk.policies.check as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: {
-        eligible: false,
-        reason: 'Return window expired',
-        maxAmount: null,
-        deadline: null,
-        conditions: [],
-      },
-      error: null,
+    expect(refund.amount).toBe(10000);
+    expect(refund.currency).toBe('usd');
+    expect(refund.status).toMatch(/succeeded|processing/);
+    expect(refund.transactionId).toBe(testTransaction.id);
+  });
+
+  it('should process a partial refund', async () => {
+    const newTransaction = await rk.transactions.create({
+      amount: 10000,
+      currency: 'usd',
+      customerId: 'cust_test_partial',
+    });
+
+    const refund = await rk.refunds.create({
+      transactionId: newTransaction.id,
+      amount: 5000,  // Half the original amount
+      reason: 'product_issue'
+    });
+
+    expect(refund.amount).toBe(5000);
+    expect(refund.status).toMatch(/succeeded|processing/);
+  });
+
+  it('should reject refund exceeding transaction amount', async () => {
+    const newTransaction = await rk.transactions.create({
+      amount: 5000,
+      currency: 'usd',
+      customerId: 'cust_test_over',
     });
 
     await expect(
-      processCustomerRefund(rk, {
-        transactionId: 'tx_old',
-        amount: 4999,
-        reason: 'product_defective',
-      }),
-    ).rejects.toThrow('Not eligible for refund');
+      rk.refunds.create({
+        transactionId: newTransaction.id,
+        amount: 10000,  // Double the transaction amount
+        reason: 'customer_request'
+      })
+    ).rejects.toThrow(RefundKit.PolicyViolationError);
+  });
 
-    expect(rk.refunds.create).not.toHaveBeenCalled();
+  it('should reject refund for non-existent transaction', async () => {
+    await expect(
+      rk.refunds.create({
+        transactionId: 'txn_does_not_exist',
+        reason: 'customer_request'
+      })
+    ).rejects.toThrow(RefundKit.NotFoundError);
+  });
+
+  it('should handle idempotent requests', async () => {
+    const newTransaction = await rk.transactions.create({
+      amount: 7500,
+      currency: 'usd',
+      customerId: 'cust_test_idempotent',
+    });
+
+    const idempotencyKey = 'test_idempotency_key_123';
+
+    const refund1 = await rk.refunds.create(
+      { transactionId: newTransaction.id, reason: 'customer_request' },
+      { idempotencyKey }
+    );
+
+    const refund2 = await rk.refunds.create(
+      { transactionId: newTransaction.id, reason: 'customer_request' },
+      { idempotencyKey }
+    );
+
+    // Same refund returned both times
+    expect(refund1.id).toBe(refund2.id);
   });
 });
 ```
 
-### Integration Testing
+### Testing Webhooks Locally
 
-For integration tests, use test keys to verify the full flow against the sandbox API:
+For local development, you need a way to receive webhooks on your machine. Use a tunneling tool or the RefundKit CLI:
 
-```typescript
-import { describe, it, expect } from 'vitest';
-import RefundKit from '@refundkit/sdk';
-
-describe('Refund Integration', () => {
-  const rk = new RefundKit({
-    apiKey: process.env.REFUNDKIT_TEST_API_KEY,
-  });
-
-  it('should create and retrieve a refund', async () => {
-    // Create
-    const { data: created, error: createError } = await rk.refunds.create({
-      transactionId: 'tx_integration_test_001',
-      amount: 1000,
-      reason: 'duplicate_charge',
-    });
-
-    expect(createError).toBeNull();
-    expect(created.status).toBe('pending');
-    expect(created.amount).toBe(1000);
-
-    // Retrieve
-    const { data: fetched, error: fetchError } = await rk.refunds.get(created.id);
-
-    expect(fetchError).toBeNull();
-    expect(fetched.id).toBe(created.id);
-    expect(fetched.transactionId).toBe('tx_integration_test_001');
-  });
-
-  it('should cancel a pending refund', async () => {
-    const { data: refund } = await rk.refunds.create({
-      transactionId: 'tx_integration_test_002',
-      amount: 500,
-      reason: 'other',
-    });
-
-    const { data: cancelled, error } = await rk.refunds.cancel(refund.id);
-
-    expect(error).toBeNull();
-    expect(cancelled.status).toBe('cancelled');
-  });
-});
+```bash
+# Using the RefundKit CLI to forward webhooks to localhost
+refundkit listen --forward-to localhost:3000/webhooks/refundkit
 ```
 
-## Monitoring Refund Health
+This creates a temporary tunnel and registers it as a webhook endpoint. Events triggered by your test-mode operations will be forwarded to your local server. You can then verify that your webhook handler processes each event type correctly.
 
-In production, you need visibility into the health of your refund system. Here are the key metrics to track.
+## Monitoring
 
-### Key Metrics
+Once your refund system is in production, you need observability. Refund operations are financial operations, and financial operations require monitoring that goes beyond standard application metrics.
 
-**Refund success rate.** The percentage of refunds that reach `completed` status. A healthy system should be above 98%. A sudden drop indicates a processor issue or a bug in your integration.
-
-**Processing time.** The time between refund creation and completion. This varies by processor (Stripe is typically minutes; bank transfers can take days), but unexpected spikes indicate problems.
-
-**Failure rate by reason.** Track which reason codes are associated with the most failures. A spike in `duplicate_charge` failures might indicate a billing bug that needs fixing.
-
-**Refund-to-transaction ratio.** The percentage of transactions that result in refunds. A sudden increase might indicate a product quality issue, a fraudulent pattern, or an agent misconfiguration.
-
-### Building a Health Dashboard
-
-Here is a pattern for computing refund health metrics:
+### Key Metrics to Track
 
 ```typescript
-interface RefundHealthMetrics {
-  totalRefunds: number;
-  byStatus: Record<string, number>;
-  successRate: number;
-  avgProcessingTimeMs: number;
-  failuresByReason: Record<string, number>;
+// Metrics you should be tracking
+interface RefundMetrics {
+  // Volume metrics
+  refundsCreatedPerMinute: number;
+  refundsSucceededPerMinute: number;
+  refundsFailedPerMinute: number;
+
+  // Financial metrics
+  totalRefundAmountToday: number;
+  averageRefundAmount: number;
+  refundRatePercent: number;  // refunds / transactions
+
+  // Latency metrics
+  averageProcessingTimeMs: number;
+  p95ProcessingTimeMs: number;
+  p99ProcessingTimeMs: number;
+
+  // Error metrics
+  policyViolationsPerHour: number;
+  processorErrorsPerHour: number;
+  webhookFailuresPerHour: number;
 }
+```
 
-async function computeRefundHealth(
-  rk: RefundKit,
-  timeWindowHours: number = 24,
-): Promise<RefundHealthMetrics> {
-  const { data: allRefunds } = await rk.refunds.list({ limit: 100 });
+### Alerting Rules
 
-  const cutoff = new Date(Date.now() - timeWindowHours * 60 * 60 * 1000);
-  const refunds = allRefunds.filter(r => new Date(r.createdAt) >= cutoff);
+Set up alerts for anomalous conditions:
 
-  const byStatus: Record<string, number> = {};
-  const failuresByReason: Record<string, number> = {};
-  let totalProcessingTime = 0;
-  let completedCount = 0;
-
-  for (const refund of refunds) {
-    byStatus[refund.status] = (byStatus[refund.status] || 0) + 1;
-
-    if (refund.status === 'completed') {
-      completedCount++;
-      const created = new Date(refund.createdAt).getTime();
-      const updated = new Date(refund.updatedAt).getTime();
-      totalProcessingTime += updated - created;
-    }
-
-    if (refund.status === 'failed') {
-      failuresByReason[refund.reason] = (failuresByReason[refund.reason] || 0) + 1;
-    }
+```typescript
+// Alert configuration examples
+const alerts = [
+  {
+    name: 'High refund rate',
+    condition: 'refund_rate > 5%',
+    window: '1 hour',
+    severity: 'warning',
+    description: 'Refund rate exceeds 5% of transactions'
+  },
+  {
+    name: 'Refund volume spike',
+    condition: 'refunds_per_hour > 3x rolling_average',
+    window: '1 hour',
+    severity: 'critical',
+    description: 'Refund volume is 3x higher than normal'
+  },
+  {
+    name: 'Processor errors',
+    condition: 'processor_error_rate > 10%',
+    window: '15 minutes',
+    severity: 'critical',
+    description: 'More than 10% of refunds are failing at the processor'
+  },
+  {
+    name: 'Webhook delivery failures',
+    condition: 'webhook_failure_rate > 5%',
+    window: '30 minutes',
+    severity: 'warning',
+    description: 'Webhook delivery is failing, events may be delayed'
+  },
+  {
+    name: 'Stuck refunds',
+    condition: 'refunds_in_processing_state > 1 hour',
+    window: 'continuous',
+    severity: 'warning',
+    description: 'Refunds stuck in processing state for over an hour'
   }
+];
+```
 
-  const terminalRefunds = refunds.filter(
-    r => r.status === 'completed' || r.status === 'failed',
-  );
+### Building a Refund Dashboard
+
+A refund dashboard should show both real-time operational data and historical trends:
+
+```typescript
+// Fetch dashboard data from RefundKit
+async function getDashboardData() {
+  const [todayAnalytics, weekAnalytics, recentRefunds, pendingApprovals] =
+    await Promise.all([
+      rk.analytics.getRefundMetrics({ period: 'today' }),
+      rk.analytics.getRefundMetrics({ period: 'last_7_days' }),
+      rk.refunds.list({ limit: 20, sort: '-createdAt' }),
+      rk.refunds.list({ status: 'requires_approval', limit: 50 })
+    ]);
 
   return {
-    totalRefunds: refunds.length,
-    byStatus,
-    successRate: terminalRefunds.length > 0
-      ? completedCount / terminalRefunds.length
-      : 1,
-    avgProcessingTimeMs: completedCount > 0
-      ? totalProcessingTime / completedCount
-      : 0,
-    failuresByReason,
+    today: {
+      count: todayAnalytics.totalCount,
+      amount: todayAnalytics.totalAmount,
+      rate: todayAnalytics.refundRate,
+      avgProcessingTime: todayAnalytics.avgProcessingTime
+    },
+    trend: {
+      dailyCounts: weekAnalytics.dailyBreakdown.map(d => ({
+        date: d.date,
+        count: d.count,
+        amount: d.amount
+      })),
+      topReasons: weekAnalytics.reasonBreakdown
+    },
+    recentRefunds: recentRefunds.data,
+    pendingApprovals: pendingApprovals.data
   };
 }
 ```
 
-### Alerting
+## Best Practices
 
-Set up alerts for these conditions:
+These practices come from real-world experience building and operating refund systems at scale.
 
-- **Success rate drops below 95%** -- Indicates a systemic issue
-- **Average processing time exceeds 2x the normal baseline** -- Indicates a processor delay
-- **More than N failed refunds in an hour** -- Indicates a potential outage
-- **Refund-to-transaction ratio exceeds threshold** -- Indicates a product or fraud issue
+### Always Store Refund Metadata
+
+Every refund should carry metadata that connects it to your business context. Who initiated it, why, from which system, against which order. This metadata is invaluable for debugging, reporting, and auditing.
 
 ```typescript
-async function checkRefundAlerts(): Promise<void> {
-  const metrics = await computeRefundHealth(rk, 1); // Last hour
+const refund = await rk.refunds.create({
+  transactionId: 'txn_abc123',
+  amount: 2500,
+  reason: 'product_issue',
+  metadata: {
+    orderId: 'order_789',
+    initiatedBy: 'agent_sarah',
+    initiatedVia: 'support_dashboard',
+    ticketId: 'ticket_456',
+    customerComment: 'Product arrived with scratched surface',
+    policyApplied: 'standard_return_policy_v2'
+  }
+});
+```
 
-  if (metrics.successRate < 0.95) {
-    await alert('Refund success rate dropped to ' +
-      `${(metrics.successRate * 100).toFixed(1)}%`);
+### Use Amounts in Smallest Currency Unit
+
+Always represent money as integers in the smallest currency unit (cents for USD, pence for GBP). Floating-point math causes rounding errors that accumulate over thousands of transactions. This is not pedantic -- a one-cent rounding error on 10,000 refunds per month is $100 per month, and more importantly, it breaks reconciliation.
+
+```typescript
+// Correct: amounts in cents
+const refund = await rk.refunds.create({
+  transactionId: 'txn_abc123',
+  amount: 4999,  // $49.99
+  reason: 'customer_request'
+});
+
+// WRONG: floating point amounts
+// amount: 49.99  // Will cause rounding issues
+```
+
+### Implement Retry with Exponential Backoff
+
+Transient errors (network timeouts, processor rate limits, temporary outages) should be retried, but not aggressively. Exponential backoff with jitter prevents thundering herd problems:
+
+```typescript
+async function refundWithRetry(
+  params: RefundCreateParams,
+  maxRetries = 3
+): Promise<Refund> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await rk.refunds.create(params);
+    } catch (error) {
+      // Do not retry policy violations or validation errors
+      if (
+        error instanceof RefundKit.PolicyViolationError ||
+        error instanceof RefundKit.ValidationError
+      ) {
+        throw error;
+      }
+
+      // Do not retry if we have exhausted attempts
+      if (attempt === maxRetries) {
+        throw error;
+      }
+
+      // Exponential backoff with jitter
+      const baseDelay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+      const jitter = Math.random() * 1000;
+      const delay = baseDelay + jitter;
+
+      console.warn(
+        `Refund attempt ${attempt + 1} failed, retrying in ${delay}ms:`,
+        error.message
+      );
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
 
-  if (metrics.byStatus['failed'] > 10) {
-    await alert(`${metrics.byStatus['failed']} refunds failed in the last hour`);
-  }
-
-  const avgProcessingSeconds = metrics.avgProcessingTimeMs / 1000;
-  if (avgProcessingSeconds > 300) { // 5 minutes
-    await alert(`Average refund processing time: ${avgProcessingSeconds.toFixed(0)}s`);
-  }
+  // TypeScript needs this, though it is unreachable
+  throw new Error('Retry loop exited unexpectedly');
 }
 ```
 
-## Best Practices Summary
+### Separate Refund Logic from Business Logic
 
-Here are the key best practices for building production refund systems, distilled from everything we have covered:
+Your refund processing code should be isolated from your business logic. The function that decides whether a customer is eligible for a refund (business logic) should be separate from the function that actually processes the refund (infrastructure). This makes both easier to test, maintain, and change independently.
 
-1. **Use smallest currency units.** Always work with integers (cents, not dollars) to avoid floating-point precision issues.
+```typescript
+// Business logic: determines eligibility
+async function evaluateRefundEligibility(
+  orderId: string,
+  requestedAmount: number
+): Promise<EligibilityResult> {
+  const order = await getOrder(orderId);
+  const daysSinceDelivery = daysBetween(order.deliveredAt, new Date());
 
-2. **Implement idempotency at every layer.** Client-side deduplication, server-side idempotency keys, and database-level unique constraints. Belt, suspenders, and duct tape.
+  if (daysSinceDelivery > 30) {
+    return { eligible: false, reason: 'Return window has expired' };
+  }
 
-3. **Validate before processing.** Check refund policies, verify transaction existence, and validate amounts before submitting to the processor. Failing early saves time and prevents confusing error states.
+  if (order.isDigitalProduct && order.hasBeenDownloaded) {
+    return { eligible: false, reason: 'Digital products are non-refundable after download' };
+  }
 
-4. **Handle all status transitions.** Your code should account for every possible refund status, including unexpected ones. Use exhaustive switch statements or a default handler.
+  const maxRefundable = order.amount - order.totalRefunded;
+  if (requestedAmount > maxRefundable) {
+    return {
+      eligible: true,
+      adjustedAmount: maxRefundable,
+      reason: `Maximum refundable amount is ${maxRefundable}`
+    };
+  }
 
-5. **Log everything.** Refund operations involve money. Log every request, every response, every status change, and every error. When something goes wrong (and it will), you will need these logs.
+  return { eligible: true, amount: requestedAmount };
+}
 
-6. **Test with real-world scenarios.** Beyond happy-path tests, simulate network timeouts, processor downtime, duplicate requests, partial refunds, and out-of-order webhooks.
+// Infrastructure: processes the refund
+async function processRefund(
+  transactionId: string,
+  amount: number,
+  metadata: Record<string, string>
+): Promise<Refund> {
+  return refundWithRetry({
+    transactionId,
+    amount,
+    reason: 'customer_request',
+    metadata
+  });
+}
 
-7. **Monitor actively.** Do not wait for customers to tell you refunds are failing. Set up dashboards and alerts that give you real-time visibility into refund health.
+// Controller: orchestrates both
+async function handleRefundRequest(
+  orderId: string,
+  requestedAmount: number
+): Promise<RefundResponse> {
+  const eligibility = await evaluateRefundEligibility(orderId, requestedAmount);
 
-8. **Separate test and live keys.** Never use live API keys in development or testing. Use test keys that connect to sandbox environments where no real money moves.
+  if (!eligibility.eligible) {
+    return { success: false, reason: eligibility.reason };
+  }
 
-9. **Attach metadata.** Every refund should carry context: who initiated it, why, and any relevant reference IDs. This metadata is invaluable for debugging and audit.
+  const amount = eligibility.adjustedAmount ?? eligibility.amount;
+  const order = await getOrder(orderId);
 
-10. **Design for failure.** Assume that any network call can fail, any processor can go down, and any webhook can be delayed. Build retry logic, fallback paths, and graceful degradation into your refund flow.
+  const refund = await processRefund(
+    order.transactionId,
+    amount,
+    { orderId, source: 'customer_portal' }
+  );
+
+  return {
+    success: true,
+    refundId: refund.id,
+    amount: refund.amount,
+    estimatedArrival: refund.estimatedArrival
+  };
+}
+```
+
+### Log Everything, but Redact Sensitive Data
+
+Refund operations should generate detailed logs for debugging and auditing. But refund data contains sensitive information (customer details, financial amounts, payment method info). Redact PII and card details from logs while preserving enough information to debug issues.
+
+```typescript
+function logRefundEvent(event: string, data: Record<string, unknown>) {
+  const redacted = {
+    ...data,
+    // Redact sensitive fields
+    customerEmail: data.customerEmail
+      ? maskEmail(data.customerEmail as string)
+      : undefined,
+    cardLast4: data.cardNumber
+      ? (data.cardNumber as string).slice(-4)
+      : undefined,
+    cardNumber: undefined,  // Never log full card numbers
+  };
+
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event,
+    ...redacted
+  }));
+}
+
+// Usage
+logRefundEvent('refund.created', {
+  refundId: refund.id,
+  transactionId: refund.transactionId,
+  amount: refund.amount,
+  currency: refund.currency,
+  customerEmail: customer.email,
+  reason: refund.reason
+});
+```
+
+## Common Pitfalls
+
+These are mistakes that show up repeatedly in production refund systems:
+
+**Not handling partial refund arithmetic correctly.** When a customer has already received a partial refund, the maximum remaining refund is the original amount minus all previous refunds. If you calculate this incorrectly, you will either over-refund (losing money) or under-refund (frustrating the customer and potentially violating regulations).
+
+**Ignoring currency formatting.** Different currencies have different decimal places. USD has 2 (so 100 = $1.00), JPY has 0 (so 100 = 100 yen), and BHD has 3 (so 1000 = 1.000 BHD). If you assume all currencies work like USD, you will process refunds for the wrong amounts in other currencies.
+
+**Not reconciling.** Your refund records and your payment processor's records should agree. Run daily reconciliation to catch discrepancies. A refund that your system thinks succeeded but the processor has no record of (or vice versa) is a problem that gets worse the longer it goes undetected.
+
+**Treating webhooks as optional.** Some developers poll the refund status API instead of setting up webhooks. This is slower, more expensive (API calls cost money at scale), and creates gaps where status changes are missed between polls. Webhooks are not optional for production systems.
 
 ## Conclusion
 
-Programmatic refunds are a critical piece of any commerce system, and they deserve the same engineering rigor as your payment acceptance flow. The lifecycle is more complex than it appears, idempotency is non-negotiable, webhook handling requires careful attention to ordering and deduplication, and monitoring is essential for catching problems before they become crises.
+Building a reliable refund system requires attention to details that are easy to overlook: idempotency keys that prevent double refunds, webhook handlers that process events exactly once, test suites that cover error cases and edge cases, monitoring that catches anomalies before they become expensive.
 
-The good news is that these problems are well-understood and have well-established solutions. By following the patterns in this guide -- structured state machines, multi-layer idempotency, robust webhook handling, comprehensive testing, and proactive monitoring -- you can build a refund system that is reliable, auditable, and maintainable.
+The patterns in this guide -- typed error handling, deterministic idempotency, idempotent webhook processing, separation of business logic from infrastructure, comprehensive monitoring -- are not theoretical best practices. They are the minimum requirements for a refund system that operates correctly under real-world conditions: network failures, processor outages, concurrent requests, and the inevitable bugs in your own code.
 
-Start with the fundamentals: get the lifecycle right, implement idempotency, and set up basic monitoring. Then layer on the advanced patterns as your volume and complexity grow. Your future self (and your finance team) will thank you.
+Start with the basics (idempotency and webhooks), add monitoring early (not after the first incident), and build your test suite as you build the features. Refund systems that are tested and monitored from day one cause far fewer 3 AM pages than ones where these concerns were added after launch.

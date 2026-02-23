@@ -1,0 +1,112 @@
+---
+title: "Eligibility & Policy Engine"
+description: "Check refund and return eligibility using machine-readable policy rules. Configure return windows, restocking fees, and per-customer limits."
+order: 31
+---
+
+# Eligibility & Policy Engine
+
+The Policy Engine evaluates refund and return requests against configurable merchant rules. It determines eligibility based on return windows, item categories, customer history, and amount thresholds.
+
+## Check Eligibility
+
+Before processing a refund, check whether the transaction is eligible.
+
+```typescript
+const { data: policy, error } = await rk.policies.check({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,
+});
+
+if (policy.eligible) {
+  console.log('Refund allowed up to', policy.maxAmount, 'cents');
+  console.log('Deadline:', policy.deadline);
+} else {
+  console.log('Not eligible:', policy.reason);
+}
+```
+
+## Policy Rules
+
+Policies are JSON-based rule sets that define refund and return conditions per merchant.
+
+### Category Rules
+
+Each product category can have its own return policy:
+
+```typescript
+const categoryRule = {
+  category: 'electronics',
+  returnWindowDays: 15,
+  restockingFeePercent: 15,
+  exchangeOnly: false,
+  finalSale: false,
+  conditions: ['Original packaging required', 'All accessories included'],
+};
+```
+
+### Global Limits
+
+Per-customer limits prevent abuse:
+
+```typescript
+const globalLimits = {
+  maxReturnsPerCustomer30d: 5,
+  maxReturnValuePerCustomer90d: 50000, // $500 in cents
+  autoApproveThreshold: 5000,          // Auto-approve under $50
+};
+```
+
+## Eligibility Result
+
+The eligibility check returns a comprehensive result:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eligible` | boolean | Whether the refund is allowed |
+| `policy.returnWindowDays` | number | Total return window in days |
+| `policy.daysRemaining` | number | Days left in the return window |
+| `policy.restockingFeePercent` | number | Restocking fee percentage |
+| `policy.exchangeOnly` | boolean | Whether only exchanges are allowed |
+| `policy.finalSale` | boolean | Whether the item is final sale |
+| `maxRefundAmount` | number | Maximum refundable amount in cents |
+| `restockingFee` | number | Restocking fee amount in cents |
+| `netRefundAmount` | number | Amount after restocking fee |
+| `autoApproved` | boolean | Whether the refund can skip approval |
+
+## Using the Policy Engine Locally
+
+For server-side evaluations, use the `PolicyEngine` class directly:
+
+```typescript
+import { PolicyEngine } from '@refundkit/sdk';
+
+const engine = new PolicyEngine({
+  returnWindowDays: 30,
+  restockingFeePercent: 0,
+  rules: [
+    { category: 'electronics', returnWindowDays: 15, restockingFeePercent: 15, exchangeOnly: false, finalSale: false, conditions: [] },
+  ],
+  globalLimits: {
+    maxReturnsPerCustomer30d: 5,
+    maxReturnValuePerCustomer90d: 50000,
+    autoApproveThreshold: 5000,
+  },
+});
+
+const result = engine.evaluate({
+  purchaseDate: '2026-02-01',
+  items: [{ sku: 'LAPTOP-01', category: 'electronics', quantity: 1, amount: 99900 }],
+  amount: 99900,
+});
+```
+
+## MCP Tool
+
+AI agents use the `refundkit_check_eligibility` tool to evaluate eligibility before processing refunds.
+
+## Next Steps
+
+- [Refunds](/docs/sdk/refunds) — Process refunds after confirming eligibility.
+- [Returns](/docs/returns) — Create a return for eligible items.
+- [Approvals](/docs/approvals) — Understand the approval workflow for high-value refunds.

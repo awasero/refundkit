@@ -1,0 +1,105 @@
+---
+title: "Approval Workflows"
+description: "Configure human-in-the-loop approval workflows for refunds that exceed amount thresholds or trigger risk flags."
+order: 32
+---
+
+# Approval Workflows
+
+RefundKit supports human-in-the-loop approval workflows. Refunds that exceed configured thresholds are routed to an approval queue instead of being processed immediately. This prevents unauthorized high-value refunds and adds oversight for flagged transactions.
+
+## How It Works
+
+1. A refund request is evaluated against approval thresholds
+2. If thresholds are met (amount, risk score, or category), the refund is queued for approval
+3. A human reviewer approves, rejects, or escalates the request
+4. Once approved, the refund continues to the payment processor
+
+## Approval Thresholds
+
+Configure thresholds that determine when human review is required:
+
+```typescript
+import { ApprovalEngine } from '@refundkit/sdk';
+
+const engine = new ApprovalEngine({
+  autoApproveBelow: 5000,      // Auto-approve under $50
+  requireReviewAbove: 20000,   // Always require review above $200
+});
+
+const decision = engine.evaluate({
+  amount: 15000,   // $150 — between thresholds
+  riskScore: 30,   // Low risk
+});
+
+console.log(decision.status);  // 'approved' or 'requires_review'
+console.log(decision.reason);
+```
+
+## Managing Approvals via API
+
+### List Pending Approvals
+
+```typescript
+const { data: approvals, error } = await rk.approvals.listPending({
+  limit: 25,
+  offset: 0,
+});
+```
+
+### Approve a Request
+
+```typescript
+const { data: approval, error } = await rk.approvals.approve(
+  'apr_abc123',
+  'Verified with customer, legitimate return.',
+);
+```
+
+### Reject a Request
+
+```typescript
+const { data: approval, error } = await rk.approvals.reject(
+  'apr_abc123',
+  'Suspicious pattern detected, denying refund.',
+);
+```
+
+### Escalate a Request
+
+```typescript
+const { data: approval, error } = await rk.approvals.escalate('apr_abc123');
+```
+
+## Approval Statuses
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Awaiting human review |
+| `approved` | Refund approved, proceeding to processor |
+| `rejected` | Refund denied |
+| `escalated` | Sent to a higher authority for review |
+
+## Risk-Based Overrides
+
+The approval engine integrates with the dispute risk engine. Even if an amount is below the review threshold, a high risk score can force the refund into the approval queue:
+
+```typescript
+const decision = engine.evaluate({
+  amount: 3000,    // $30 — normally auto-approved
+  riskScore: 80,   // High risk — overrides to require review
+});
+
+console.log(decision.status);  // 'requires_review'
+console.log(decision.reason);  // 'Risk score exceeds threshold'
+```
+
+## MCP Tool
+
+AI agents use the `refundkit_approve_refund` tool (admin scope) to approve or reject pending requests.
+
+## Next Steps
+
+- [Disputes](/docs/disputes) — Understand risk scoring that triggers approvals.
+- [Eligibility](/docs/eligibility) — Policy rules that determine auto-approve thresholds.
+- [Webhooks](/docs/webhooks-guide) — Get notified when approvals are pending or decided.

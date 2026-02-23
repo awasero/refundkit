@@ -1,0 +1,87 @@
+---
+title: "Fraud & Dispute Prevention"
+description: "Assess chargeback risk using multi-signal scoring. Detect velocity spikes, amount anomalies, and suspicious patterns before they become disputes."
+order: 33
+---
+
+# Fraud & Dispute Prevention
+
+RefundKit's dispute risk engine scores refund requests for chargeback probability. It evaluates multiple signals — velocity patterns, amount anomalies, customer history, and behavioral patterns — to produce a risk score and recommendation.
+
+## Assess Dispute Risk
+
+```typescript
+const { data: risk, error } = await rk.disputes.getRisk({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+});
+
+console.log(risk.riskScore);        // 0-100
+console.log(risk.riskLevel);        // 'low' | 'medium' | 'high' | 'critical'
+console.log(risk.recommendation);   // 'approve' | 'review' | 'deny' | 'preemptive_refund'
+console.log(risk.signals);          // Array of detected signals
+```
+
+## Risk Levels
+
+| Level | Score Range | Description |
+|-------|------------|-------------|
+| `low` | 0-24 | Normal transaction, safe to process |
+| `medium` | 25-49 | Minor flags, monitor closely |
+| `high` | 50-74 | Multiple risk signals, recommend review |
+| `critical` | 75-100 | Strong fraud indicators, recommend denial |
+
+## Signal Types
+
+The engine evaluates four categories of signals:
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| `velocity_spike` | 35% | Unusual number of refund requests in a short period |
+| `amount_anomaly` | 25% | Refund amount significantly deviates from typical values |
+| `customer_history` | 20% | Customer's refund history exceeds normal patterns |
+| `pattern_match` | 20% | Transaction matches known fraud patterns |
+
+## Recommendations
+
+| Recommendation | Action |
+|----------------|--------|
+| `approve` | Safe to process without additional review |
+| `review` | Route to the approval queue for human review |
+| `deny` | Block the refund, high fraud probability |
+| `preemptive_refund` | Issue a proactive refund to avoid a chargeback |
+
+## Using the Risk Engine Locally
+
+```typescript
+import { DisputeRiskEngine } from '@refundkit/sdk';
+
+const engine = new DisputeRiskEngine();
+
+const risk = engine.evaluate({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 15000,
+  customerRefundsLast30d: 8,
+  averageOrderValue: 5000,
+});
+```
+
+## Flag a Transaction
+
+Manually flag a transaction for review:
+
+```typescript
+const { data, error } = await rk.disputes.flag(
+  'ch_1N4HbSKz9cXRvFYr',
+  'Customer opened 5 refunds this week',
+);
+```
+
+## MCP Tool
+
+AI agents use the `refundkit_get_dispute_risk` tool to assess risk before processing refunds.
+
+## Next Steps
+
+- [Approvals](/docs/approvals) — Risk scores can trigger approval workflows.
+- [Webhooks](/docs/webhooks-guide) — Get notified when transactions are flagged.
+- [Eligibility](/docs/eligibility) — Policy rules work alongside risk scoring.

@@ -1,0 +1,100 @@
+---
+title: "Architecture"
+description: "RefundKit's 3-layer architecture: AI Agents & Protocols → Core Engine → Payment Providers."
+order: 50
+---
+
+# Architecture
+
+RefundKit uses a 3-layer architecture that separates AI agent integrations from core business logic and external payment providers.
+
+## Overview
+
+```
+┌─────────────────────────────────────────┐
+│       Layer 1: AI Agents & Protocols    │
+│  Shopping Agents · Agent Frameworks     │
+│  Commerce Protocols · Support Agents    │
+│                                         │
+│  ┌──────┐  ┌──────┐  ┌──────────┐     │
+│  │ MCP  │  │ SDK  │  │ REST API │     │
+│  │Server│  │(TS)  │  │  (HTTP)  │     │
+│  └──┬───┘  └──┬───┘  └────┬─────┘     │
+├─────┼─────────┼───────────┼────────────┤
+│     └─────────┴───────────┘            │
+│       Layer 2: RefundKit Core          │
+│                                         │
+│  ┌──────────┐  ┌──────────────────┐    │
+│  │  Policy   │  │ Return Lifecycle │    │
+│  │  Engine   │  │   Management    │    │
+│  └──────────┘  └──────────────────┘    │
+│  ┌──────────┐  ┌──────────────────┐    │
+│  │  Fraud & │  │    Approval      │    │
+│  │ Disputes │  │   Workflows      │    │
+│  └──────────┘  └──────────────────┘    │
+│  ┌──────────┐  ┌──────────────────┐    │
+│  │  Webhook │  │   Processor      │    │
+│  │  System  │  │    Router        │    │
+│  └──────────┘  └──────────────────┘    │
+├────────────────────────────────────────┤
+│       Layer 3: Payment Providers       │
+│  ┌────────┐  ┌────────┐  ┌────────┐  │
+│  │ Stripe │  │ Square │  │  More  │  │
+│  └────────┘  └────────┘  └────────┘  │
+│                                        │
+│  ┌─────────────────────────────────┐   │
+│  │         Supabase (PostgreSQL)   │   │
+│  └─────────────────────────────────┘   │
+└────────────────────────────────────────┘
+```
+
+## Layer 1: AI Agents & Protocols
+
+The consumption layer. AI agents interact with RefundKit through three interfaces:
+
+- **MCP Server** — 12 tools via Model Context Protocol (stdio or SSE transport)
+- **TypeScript SDK** — Direct integration for Node.js/TypeScript applications
+- **REST API** — HTTP endpoints at `api.refundkit.dev/v1`
+
+All three interfaces return the same `{ data, error }` response shape.
+
+## Layer 2: RefundKit Core
+
+The business logic layer. All decisions are made here:
+
+| Module | Purpose |
+|--------|---------|
+| **Policy Engine** | Evaluates eligibility against merchant rules |
+| **Return Lifecycle** | Manages RMA generation, state machine, shipment tracking |
+| **Fraud & Disputes** | Multi-signal risk scoring and recommendations |
+| **Approval Workflows** | Human-in-the-loop review for high-value or risky refunds |
+| **Webhook System** | Event-driven notifications with HMAC-SHA256 signatures |
+| **Processor Router** | Auto-routes refunds to the correct payment processor |
+
+## Layer 3: Payment Providers
+
+The execution layer. Processor adapters translate RefundKit operations into provider-specific API calls:
+
+| Provider | Status | Capabilities |
+|----------|--------|-------------|
+| **Stripe** | Available | Full refund lifecycle, partial refunds, cancellation |
+| **Square** | Available | Refund processing, partial refunds (no cancellation) |
+| **PayPal** | Planned | — |
+| **Adyen** | Planned | — |
+
+## Data Flow: Refund Request
+
+1. Agent calls `refundkit_process_refund` (MCP) or `rk.refunds.create()` (SDK)
+2. Policy Engine checks eligibility against merchant rules
+3. Dispute Risk Engine scores the transaction
+4. If thresholds are exceeded, refund enters the Approval Queue
+5. Once approved, Processor Router selects the correct payment processor
+6. Processor adapter executes the refund with the payment provider
+7. Webhook System notifies subscribed endpoints of the status change
+8. Return is updated in Supabase (PostgreSQL)
+
+## Next Steps
+
+- [Quickstart](/docs/getting-started/quickstart) — Get started with RefundKit.
+- [MCP Server](/docs/mcp-server) — Connect AI agents to RefundKit.
+- [SDK Reference](/docs/sdk/refunds) — Full SDK documentation.

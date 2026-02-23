@@ -1,4 +1,6 @@
 import { cn } from '@/lib/utils';
+import { Card } from '@/components/ui/card';
+import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 interface StatsCardProps {
   title: string;
@@ -7,23 +9,32 @@ interface StatsCardProps {
   changeType?: 'positive' | 'negative' | 'neutral';
 }
 
+const changeIcons = {
+  positive: TrendingUp,
+  negative: TrendingDown,
+  neutral: Minus,
+};
+
 export function StatsCard({ title, value, change, changeType = 'neutral' }: StatsCardProps) {
+  const ChangeIcon = changeIcons[changeType];
+
   return (
-    <div className="rounded-xl border border-white/5 bg-surface p-6">
-      <p className="text-sm text-text-secondary">{title}</p>
-      <p className="mt-2 text-3xl font-semibold text-text-primary">{value}</p>
+    <Card className="p-5">
+      <p className="text-xs font-medium text-text-muted">{title}</p>
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{value}</p>
       {change && (
-        <p
+        <div
           className={cn(
-            'mt-1 text-sm',
+            'mt-2 flex items-center gap-1 text-xs',
             changeType === 'positive' && 'text-success',
             changeType === 'negative' && 'text-danger',
-            changeType === 'neutral' && 'text-text-secondary',
+            changeType === 'neutral' && 'text-text-muted',
           )}
         >
+          <ChangeIcon className="h-3 w-3" />
           {change}
-        </p>
+        </div>
       )}
-    </div>
+    </Card>
   );
 }

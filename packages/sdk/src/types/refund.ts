@@ -11,6 +11,12 @@ export type RefundReason =
   | 'wrong_product'
   | 'duplicate_charge'
   | 'subscription_cancelled'
+  | 'agent_error'
+  | 'price_change'
+  | 'sizing_issue'
+  | 'item_not_as_described'
+  | 'order_cancelled'
+  | 'return_window_closing'
   | 'other';
 
 export type RefundInitiatedBy = 'api' | 'dashboard' | 'mcp';
@@ -27,6 +33,11 @@ export interface Refund {
   processor: string;
   metadata: Record<string, unknown> | null;
   initiatedBy: RefundInitiatedBy;
+  returnId: string | null;
+  approvalId: string | null;
+  disputeRiskScore: number | null;
+  splitFromId: string | null;
+  storeCreditId: string | null;
   createdAt: string;
   updatedAt: string;
 }

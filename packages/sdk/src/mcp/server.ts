@@ -10,8 +10,28 @@ import { checkStatusTool, handleCheckStatus } from './tools/check-status.js';
 import { listRefundsTool, handleListRefunds } from './tools/list-refunds.js';
 import { getPolicyTool, handleGetPolicy } from './tools/get-policy.js';
 import { cancelRefundTool, handleCancelRefund } from './tools/cancel-refund.js';
+import { checkEligibilityTool, handleCheckEligibility } from './tools/check-eligibility.js';
+import { createReturnTool, handleCreateReturn } from './tools/create-return.js';
+import { trackReturnTool, handleTrackReturn } from './tools/track-return.js';
+import { getDisputeRiskTool, handleGetDisputeRisk } from './tools/get-dispute-risk.js';
+import { approveRefundTool, handleApproveRefund } from './tools/approve-refund.js';
+import { issueStoreCreditTool, handleIssueStoreCredit } from './tools/issue-store-credit.js';
+import { listReturnsTool, handleListReturns } from './tools/list-returns.js';
 
-const TOOLS = [processRefundTool, checkStatusTool, listRefundsTool, getPolicyTool, cancelRefundTool];
+const TOOLS = [
+  processRefundTool,
+  checkStatusTool,
+  listRefundsTool,
+  getPolicyTool,
+  cancelRefundTool,
+  checkEligibilityTool,
+  createReturnTool,
+  trackReturnTool,
+  getDisputeRiskTool,
+  approveRefundTool,
+  issueStoreCreditTool,
+  listReturnsTool,
+];
 
 type ToolHandler = (rk: RefundKit, args: Record<string, unknown>) => Promise<{
   content: { type: 'text'; text: string }[];
@@ -24,6 +44,13 @@ const HANDLERS: Record<string, ToolHandler> = {
   [listRefundsTool.name]: handleListRefunds,
   [getPolicyTool.name]: handleGetPolicy,
   [cancelRefundTool.name]: handleCancelRefund,
+  [checkEligibilityTool.name]: handleCheckEligibility,
+  [createReturnTool.name]: handleCreateReturn,
+  [trackReturnTool.name]: handleTrackReturn,
+  [getDisputeRiskTool.name]: handleGetDisputeRisk,
+  [approveRefundTool.name]: handleApproveRefund,
+  [issueStoreCreditTool.name]: handleIssueStoreCredit,
+  [listReturnsTool.name]: handleListReturns,
 };
 
 export function createMcpServer(apiKey: string, baseUrl?: string): Server {

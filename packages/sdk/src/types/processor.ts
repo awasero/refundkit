@@ -43,3 +43,39 @@ export interface PaymentProcessor {
   cancelRefund(externalId: string): Promise<ProcessorCancelResult>;
   validateTransaction(transactionId: string): Promise<TransactionInfo>;
 }
+
+export interface ProcessorMetadata {
+  name: string;
+  version: string;
+  supportedCurrencies: string[];
+  maxRefundAmount?: number;
+  webhookSupport: boolean;
+}
+
+export interface ProcessorCapabilities {
+  splitRefund: boolean;
+  partialRefund: boolean;
+  storeCredit: boolean;
+  asyncProcessing: boolean;
+}
+
+export interface SplitRefundParams {
+  orderId: string;
+  splits: Array<{
+    processorName: string;
+    amount: number;
+    paymentMethodId: string;
+  }>;
+  reason: string;
+  currency: string;
+}
+
+export interface SplitRefundResult {
+  orderId: string;
+  splits: Array<{
+    processorName: string;
+    result: ProcessorRefundResult;
+  }>;
+  totalRefunded: number;
+  allSucceeded: boolean;
+}

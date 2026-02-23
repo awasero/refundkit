@@ -1,0 +1,187 @@
+# RefundKit
+
+> Refund infrastructure for AI agents. Process refunds, manage returns, prevent fraud, and automate approval workflows through MCP tools, TypeScript SDK, and REST API.
+
+## Overview
+
+RefundKit is an agent-native refund orchestration platform. It provides AI agents with the tools to handle the complete refund lifecycle — from eligibility checks to payment processor execution.
+
+## SDK Installation
+
+```bash
+npm install @refundkit/sdk
+```
+
+## SDK Initialization
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY,
+});
+```
+
+## API Key Format
+
+- Live keys: `rk_live_` + 32 random characters
+- Test keys: `rk_test_` + 32 random characters
+- All API calls require a Bearer token: `Authorization: Bearer rk_live_...`
+
+## SDK Methods
+
+All methods return `{ data, error }`. If successful, `error` is null. If failed, `data` is null and `error` contains `{ message, code }`.
+
+### Refunds
+
+- `rk.refunds.create({ transactionId, amount, reason, currency? })` — Create a refund
+- `rk.refunds.get(refundId)` — Get a refund by ID
+- `rk.refunds.list({ status?, processor?, limit?, offset? })` — List refunds
+- `rk.refunds.cancel(refundId)` — Cancel a pending refund
+
+### Policies
+
+- `rk.policies.check({ transactionId, amount? })` — Check refund eligibility
+
+### Returns
+
+- `rk.returns.create({ refundId, items, method?, customerNotes? })` — Create a return (generates RMA)
+- `rk.returns.get(returnId)` — Get a return by ID
+- `rk.returns.list({ status?, limit?, offset? })` — List returns
+- `rk.returns.trackShipment(returnId)` — Track return shipment
+- `rk.returns.cancel(returnId)` — Cancel a return
+
+### Disputes
+
+- `rk.disputes.getRisk({ transactionId })` — Assess dispute risk (returns score 0-100)
+- `rk.disputes.flag(transactionId, reason)` — Flag a transaction
+
+### Approvals
+
+- `rk.approvals.listPending({ limit?, offset? })` — List pending approvals
+- `rk.approvals.approve(approvalId, reason?)` — Approve a refund
+- `rk.approvals.reject(approvalId, reason)` — Reject a refund
+- `rk.approvals.escalate(approvalId)` — Escalate to higher authority
+
+### Store Credit
+
+- `rk.storeCredit.issue({ customerId, amount, creditType, currency?, expiresInDays? })` — Issue store credit
+- `rk.storeCredit.get(creditId)` — Get a store credit
+- `rk.storeCredit.listByCustomer(customerId)` — List credits for a customer
+
+## Refund Statuses
+
+pending → processing → completed
+pending → cancelled
+processing → failed
+
+## Return Statuses
+
+requested → approved → label_generated → shipped → in_transit → delivered → inspecting → completed
+Any state can transition to → rejected
+
+## Refund Reasons
+
+product_not_received, product_defective, wrong_product, duplicate_charge, subscription_cancelled, customer_request, agent_error, price_change, sizing_issue, item_not_as_described, order_cancelled, return_window_closing, other
+
+## Credit Types
+
+refund_conversion, goodwill, exchange_difference, promotional
+
+## Risk Levels
+
+low (0-24), medium (25-49), high (50-74), critical (75-100)
+
+## MCP Server Tools (12 tools)
+
+### Read-Only Tools
+1. `refundkit_check_refund_status` — Check the status of a refund
+2. `refundkit_list_refunds` — List refunds with filters
+3. `refundkit_check_eligibility` — Check refund eligibility against policy rules
+4. `refundkit_get_policy` — Get refund policy for a transaction
+5. `refundkit_track_return` — Track return shipment status
+6. `refundkit_get_dispute_risk` — Assess chargeback risk
+7. `refundkit_list_returns` — List return requests
+
+### Read-Write Tools
+8. `refundkit_process_refund` — Process a refund
+9. `refundkit_create_return` — Create a return with RMA
+10. `refundkit_cancel_refund` — Cancel a pending refund
+11. `refundkit_issue_store_credit` — Issue store credit
+
+### Admin Tools
+12. `refundkit_approve_refund` — Approve or reject a pending approval
+
+## MCP Server Configuration
+
+### Local (stdio)
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "npx",
+      "args": ["-y", "@refundkit/sdk", "--mcp"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_live_..."
+      }
+    }
+  }
+}
+```
+
+### Remote (SSE)
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "url": "https://mcp.refundkit.dev",
+      "headers": {
+        "Authorization": "Bearer <oauth-token>"
+      }
+    }
+  }
+}
+```
+
+## Payment Processors
+
+### Stripe
+- Full refund lifecycle: create, get status, cancel
+- Payment method prefixes: pm_, pi_, ch_, re_
+
+### Square
+- Refund processing: create, get status
+- No refund cancellation support
+- Sandbox and production environments
+
+### Processor Router
+- Auto-routes by payment method prefix
+- Supports split refunds across multiple processors
+- Fallback to default processor
+
+## Webhook Events
+
+refund.initiated, refund.approved, refund.processing, refund.completed, refund.failed, refund.cancelled, return.created, return.approved, return.shipped, return.received, return.inspected, return.completed, approval.pending, approval.decided, dispute.risk_flagged, store_credit.issued, store_credit.redeemed
+
+## Webhook Signature
+
+Payloads are signed with HMAC-SHA256. Verify with:
+
+```typescript
+import { verifySignature } from '@refundkit/sdk';
+const isValid = verifySignature(payload, signatureHeader, webhookSecret);
+```
+
+## Error Codes
+
+VALIDATION_ERROR, AUTHENTICATION_ERROR, NOT_FOUND, RATE_LIMIT, TIMEOUT, NETWORK_ERROR, PROCESSOR_ERROR, INTERNAL_ERROR
+
+## REST API Base URL
+
+https://api.refundkit.dev/v1
+
+## Documentation
+
+https://refundkit.dev/docs

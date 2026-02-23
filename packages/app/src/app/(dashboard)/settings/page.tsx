@@ -1,50 +1,75 @@
 import { Header } from '@/components/dashboard/header';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 export default function SettingsPage() {
   return (
     <>
       <Header title="Settings" />
-      <div className="mx-auto max-w-4xl p-6">
-        <div className="space-y-6">
-          <div className="rounded-xl border border-white/5 bg-surface p-6">
-            <h2 className="text-lg font-semibold text-text-primary">Organization</h2>
-            <p className="mt-1 text-sm text-text-secondary">Manage your organization settings.</p>
-            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="text-xs text-text-secondary">Organization Name</label>
+      <div className="flex-1 p-6">
+        <div className="mx-auto max-w-5xl space-y-6">
+          {/* Organization */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Organization</CardTitle>
+              <CardDescription>
+                Manage your organization settings.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="max-w-sm">
+                <label className="text-xs font-medium text-text-secondary">
+                  Organization Name
+                </label>
                 <input
                   type="text"
                   defaultValue="My Organization"
-                  className="mt-1 w-full rounded-lg border border-white/5 bg-background px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                  className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent/40 focus:outline-none"
                 />
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="rounded-xl border border-white/5 bg-surface p-6">
-            <h2 className="text-lg font-semibold text-text-primary">Webhooks</h2>
-            <p className="mt-1 text-sm text-text-secondary">
-              Configure webhook endpoints for real-time refund notifications.
-            </p>
-            <div className="mt-4">
-              <label className="text-xs text-text-secondary">Webhook URL</label>
-              <input
-                type="url"
-                placeholder="https://your-app.com/webhooks/refundkit"
-                className="mt-1 w-full rounded-lg border border-white/5 bg-background px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
-              />
-            </div>
-          </div>
+          {/* Webhooks */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Webhooks</CardTitle>
+              <CardDescription>
+                Configure webhook endpoints for real-time refund notifications.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div>
+                <label className="text-xs font-medium text-text-secondary">
+                  Webhook URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://your-app.com/webhooks/refundkit"
+                  className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent/40 focus:outline-none"
+                />
+              </div>
+            </CardContent>
+          </Card>
 
-          <div className="rounded-xl border border-danger/20 bg-surface p-6">
-            <h2 className="text-lg font-semibold text-danger">Danger Zone</h2>
-            <p className="mt-1 text-sm text-text-secondary">
-              Irreversible actions for your organization.
-            </p>
-            <button className="mt-4 rounded-lg border border-danger/30 px-4 py-2 text-sm text-danger hover:bg-danger/10">
-              Delete Organization
-            </button>
-          </div>
+          {/* Danger Zone */}
+          <Card className="border-danger/20">
+            <CardHeader>
+              <CardTitle className="text-danger">Danger Zone</CardTitle>
+              <CardDescription>
+                Irreversible actions for your organization.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="danger">Delete Organization</Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </>

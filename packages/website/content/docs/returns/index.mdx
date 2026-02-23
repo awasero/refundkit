@@ -1,0 +1,115 @@
+---
+title: "Returns"
+description: "Manage the complete return lifecycle — from RMA generation to shipment tracking to refund completion."
+order: 30
+---
+
+# Returns
+
+RefundKit manages the full return lifecycle. When a customer needs to return a product, the SDK generates an RMA (Return Merchandise Authorization) number, tracks the shipment, and can automatically trigger a refund upon receipt.
+
+## Return Lifecycle
+
+Returns move through a defined state machine:
+
+`requested` → `approved` → `label_generated` → `shipped` → `in_transit` → `delivered` → `inspecting` → `completed`
+
+At any point, a return can transition to `rejected`. Terminal states are `completed` and `rejected`.
+
+## Create a Return
+
+Create a return request linked to an existing refund. An RMA number is automatically generated.
+
+```typescript
+const { data: ret, error } = await rk.returns.create({
+  refundId: 'ref_abc123',
+  items: [
+    { sku: 'SHOE-BLK-10', quantity: 1, reason: 'sizing_issue' },
+    { sku: 'SOCK-WHT-M', quantity: 2, reason: 'defective' },
+  ],
+  method: 'mail', // 'mail' | 'in_store' | 'pickup'
+  customerNotes: 'Shoes were too small, socks had holes.',
+});
+
+console.log(ret.rmaNumber); // RMA-20260223-K8M2N4
+console.log(ret.status);    // 'requested'
+```
+
+## Get a Return
+
+Retrieve a return by its ID.
+
+```typescript
+const { data: ret, error } = await rk.returns.get('ret_xyz789');
+
+console.log(ret.rmaNumber);
+console.log(ret.status);
+console.log(ret.items);
+```
+
+## List Returns
+
+List returns with optional status filtering and pagination.
+
+```typescript
+const { data: returns, error } = await rk.returns.list({
+  status: 'shipped',
+  limit: 25,
+  offset: 0,
+});
+```
+
+## Track Shipment
+
+Track the shipment status of a return.
+
+```typescript
+const { data: shipment, error } = await rk.returns.trackShipment('ret_xyz789');
+
+console.log(shipment.carrier);
+console.log(shipment.trackingNumber);
+console.log(shipment.status);
+```
+
+## Cancel a Return
+
+Cancel a return that hasn't been shipped yet.
+
+```typescript
+const { data: cancelled, error } = await rk.returns.cancel('ret_xyz789');
+```
+
+## Return Statuses
+
+| Status | Description |
+|--------|-------------|
+| `requested` | Return request submitted by customer |
+| `approved` | Return approved, awaiting label or shipment |
+| `label_generated` | Shipping label created |
+| `shipped` | Customer shipped the package |
+| `in_transit` | Package in transit to warehouse |
+| `delivered` | Package delivered to warehouse |
+| `inspecting` | Items being inspected |
+| `completed` | Return processed, refund issued |
+| `rejected` | Return denied or items failed inspection |
+
+## Item Reasons
+
+| Reason | Description |
+|--------|-------------|
+| `defective` | Product has manufacturing defect |
+| `wrong_item` | Received incorrect product |
+| `not_as_described` | Product doesn't match description |
+| `no_longer_needed` | Customer no longer wants the item |
+| `sizing_issue` | Wrong size or fit |
+| `other` | Other reason |
+
+## MCP Tool
+
+AI agents can create and track returns using the `refundkit_create_return` and `refundkit_track_return` tools.
+
+## Next Steps
+
+- [Eligibility](/docs/eligibility) — Check if a return is eligible before creating it.
+- [Store Credit](/docs/store-credit) — Issue store credit instead of a cash refund.
+- [Webhooks](/docs/webhooks-guide) — Get notified when return status changes.

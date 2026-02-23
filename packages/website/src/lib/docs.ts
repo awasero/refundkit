@@ -86,6 +86,13 @@ export function getDocsSidebar(): SidebarSection[] {
     sdk: 'SDK',
     'api-reference': 'API Reference',
     processors: 'Processors',
+    returns: 'Returns',
+    eligibility: 'Eligibility',
+    approvals: 'Approvals',
+    disputes: 'Disputes',
+    'store-credit': 'Store Credit',
+    'webhooks-guide': 'Webhooks',
+    architecture: 'Architecture',
   };
 
   for (const doc of docs) {
@@ -116,6 +123,6 @@ export function getDocsSidebar(): SidebarSection[] {
     };
   }
 
-  const order = ['getting-started', 'mcp-server', 'sdk', 'api-reference', 'processors', '_other'];
+  const order = ['getting-started', 'mcp-server', 'sdk', 'api-reference', 'returns', 'eligibility', 'approvals', 'disputes', 'store-credit', 'webhooks-guide', 'processors', 'architecture', '_other'];
   return order.filter((k) => sections[k]).map((k) => sections[k]);
 }

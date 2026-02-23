@@ -5,4 +5,8 @@ export type {
   ProcessorStatus,
   ProcessorCancelResult,
   TransactionInfo,
+  ProcessorMetadata,
+  ProcessorCapabilities,
+  SplitRefundParams,
+  SplitRefundResult,
 } from '../types/processor.js';

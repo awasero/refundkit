@@ -1,0 +1,89 @@
+---
+title: "Square"
+description: "Process refunds through Square using the SquareProcessor adapter. Supports sandbox and production environments."
+order: 41
+---
+
+# Square Processor
+
+RefundKit supports Square as a payment processor through the `SquareProcessor` adapter. It communicates with Square's Refunds API using HTTP calls — no additional Square SDK dependency required.
+
+## Setup
+
+```typescript
+import { SquareProcessor, ProcessorRouter } from '@refundkit/sdk';
+
+const square = new SquareProcessor({
+  accessToken: process.env.SQUARE_ACCESS_TOKEN!,
+  environment: 'production', // 'sandbox' | 'production'
+});
+
+// Register with the router
+const router = new ProcessorRouter();
+router.register(square);
+```
+
+## Process a Refund
+
+```typescript
+const result = await square.processRefund({
+  transactionId: 'PAYMENT_ID_FROM_SQUARE',
+  amount: 2500,
+  currency: 'usd',
+  reason: 'product_defective',
+});
+
+console.log(result.externalRefundId); // Square refund ID
+console.log(result.status);           // 'completed' | 'processing' | 'failed'
+```
+
+## Multi-Processor Routing
+
+When using both Stripe and Square, the `ProcessorRouter` automatically detects the correct processor:
+
+```typescript
+import { StripeProcessor, SquareProcessor, ProcessorRouter } from '@refundkit/sdk';
+
+const router = new ProcessorRouter();
+router.register(new StripeProcessor(process.env.STRIPE_SECRET_KEY!));
+router.register(new SquareProcessor({ accessToken: process.env.SQUARE_ACCESS_TOKEN! }));
+
+// Route by explicit name
+const stripe = router.route('stripe');
+
+// Route by payment method prefix (pm_, pi_, ch_ → Stripe)
+const auto = router.route(undefined, 'pm_1234567890');
+
+// Get all available processors
+const processors = router.getAvailableProcessors();
+```
+
+## Split Refunds
+
+For orders paid across multiple processors:
+
+```typescript
+const result = await router.splitRefund({
+  orderId: 'order_abc123',
+  splits: [
+    { processorName: 'stripe', amount: 1500, paymentMethodId: 'pm_stripe123' },
+    { processorName: 'square', amount: 1000, paymentMethodId: 'SQUARE_PAYMENT_ID' },
+  ],
+  reason: 'product_defective',
+  currency: 'usd',
+});
+
+console.log(result.allSucceeded);  // true if all splits completed
+console.log(result.totalRefunded); // 2500
+```
+
+## Square Limitations
+
+- **No refund cancellation**: Square does not support cancelling a refund once initiated
+- **Async processing**: Refunds may take 1-2 business days to complete
+- **Idempotency**: RefundKit automatically generates idempotency keys for Square API calls
+
+## Next Steps
+
+- [Stripe](/docs/processors/stripe) — Stripe processor documentation.
+- [Eligibility](/docs/eligibility) — Check eligibility before routing to a processor.

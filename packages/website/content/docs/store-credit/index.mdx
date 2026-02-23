@@ -1,0 +1,71 @@
+---
+title: "Store Credit"
+description: "Issue store credit as an alternative to cash refunds. Support refund conversions, goodwill credits, exchange differences, and promotional credits."
+order: 34
+---
+
+# Store Credit
+
+Store credit offers an alternative to cash refunds. RefundKit tracks credit issuance, redemption, and expiration. Credits can be issued as refund conversions, goodwill gestures, exchange differences, or promotional incentives.
+
+## Issue Store Credit
+
+```typescript
+const { data: credit, error } = await rk.storeCredit.issue({
+  customerId: 'cus_abc123',
+  amount: 2500,              // $25.00 in cents
+  creditType: 'refund_conversion',
+  currency: 'usd',
+  refundId: 'ref_xyz789',   // Optional: link to a refund
+  expiresInDays: 365,       // Optional: credit expires in 1 year
+});
+
+console.log(credit.id);              // 'sc_...'
+console.log(credit.remainingAmount); // 2500
+console.log(credit.status);          // 'active'
+```
+
+## Get Store Credit
+
+```typescript
+const { data: credit, error } = await rk.storeCredit.get('sc_abc123');
+```
+
+## List Customer Credits
+
+```typescript
+const { data: credits, error } = await rk.storeCredit.listByCustomer('cus_abc123');
+
+for (const credit of credits) {
+  console.log(credit.id, credit.remainingAmount, credit.status);
+}
+```
+
+## Credit Types
+
+| Type | Description |
+|------|-------------|
+| `refund_conversion` | Cash refund converted to store credit (often with a bonus) |
+| `goodwill` | Credit issued as a customer satisfaction gesture |
+| `exchange_difference` | Credit for price difference in an exchange |
+| `promotional` | Promotional credit (e.g., referral bonus) |
+
+## Credit Statuses
+
+| Status | Description |
+|--------|-------------|
+| `active` | Credit is available for use |
+| `partially_redeemed` | Some credit has been used |
+| `fully_redeemed` | All credit has been used |
+| `expired` | Credit expired before being fully used |
+| `revoked` | Credit was manually revoked |
+
+## MCP Tool
+
+AI agents use the `refundkit_issue_store_credit` tool to offer store credit as an alternative to cash refunds.
+
+## Next Steps
+
+- [Returns](/docs/returns) — Store credit can be issued upon return completion.
+- [Refunds](/docs/sdk/refunds) — Compare cash refunds vs. store credit.
+- [Eligibility](/docs/eligibility) — Policy rules can suggest store credit over cash refunds.

@@ -1,0 +1,111 @@
+---
+title: "Webhooks Guide"
+description: "Receive real-time notifications for refund lifecycle events. Configure endpoints, verify signatures, and handle retries."
+order: 35
+---
+
+# Webhooks Guide
+
+Webhooks deliver real-time notifications when events occur in your RefundKit account. Use them to update your systems when refunds are processed, returns are received, or approvals are decided.
+
+## Event Types
+
+| Event | Trigger |
+|-------|---------|
+| `refund.initiated` | Refund created (may be pending approval) |
+| `refund.approved` | Refund approved (manual or auto) |
+| `refund.processing` | Refund sent to payment processor |
+| `refund.completed` | Refund successfully processed |
+| `refund.failed` | Refund failed at the processor |
+| `refund.cancelled` | Refund cancelled before completion |
+| `return.created` | Return/RMA request created |
+| `return.approved` | Return approved |
+| `return.shipped` | Customer shipped the return |
+| `return.received` | Warehouse received the return |
+| `return.inspected` | Return items inspected |
+| `return.completed` | Return fully processed |
+| `approval.pending` | Refund queued for human review |
+| `approval.decided` | Approval decision made |
+| `dispute.risk_flagged` | Transaction flagged by risk engine |
+| `store_credit.issued` | Store credit issued to customer |
+| `store_credit.redeemed` | Store credit redeemed |
+
+## Webhook Payload
+
+Every webhook delivery includes:
+
+```json
+{
+  "id": "evt_1234567890_abc",
+  "type": "refund.completed",
+  "created": "2026-02-23T12:00:00.000Z",
+  "timestamp": 1740312000,
+  "data": {
+    "refundId": "ref_abc123",
+    "amount": 2500,
+    "currency": "usd",
+    "status": "completed"
+  }
+}
+```
+
+## Signature Verification
+
+Every webhook is signed with HMAC-SHA256. Verify the signature to ensure the payload is authentic.
+
+The signature is sent in the `X-RefundKit-Signature` header.
+
+```typescript
+import { verifySignature } from '@refundkit/sdk';
+
+function handleWebhook(payload: string, signature: string) {
+  const isValid = verifySignature(payload, signature, process.env.WEBHOOK_SECRET!);
+
+  if (!isValid) {
+    throw new Error('Invalid webhook signature');
+  }
+
+  const event = JSON.parse(payload);
+  // Process the event...
+}
+```
+
+## Replay Protection
+
+Webhook payloads include a Unix timestamp. Reject payloads older than 5 minutes to prevent replay attacks:
+
+```typescript
+import { isTimestampValid } from '@refundkit/sdk';
+
+const event = JSON.parse(payload);
+if (!isTimestampValid(event.timestamp)) {
+  throw new Error('Webhook timestamp is stale — possible replay attack');
+}
+```
+
+## Retry Policy
+
+Failed deliveries are retried with exponential backoff:
+
+| Attempt | Delay |
+|---------|-------|
+| 1 | Immediate |
+| 2 | 5 seconds |
+| 3 | 30 seconds |
+| 4 | 5 minutes |
+| 5 | 30 minutes |
+| 6 | 2 hours |
+
+After 5 failed retries, the endpoint is marked as failing and your team is notified.
+
+**Response handling:**
+- `2xx` — Success, delivery confirmed
+- `4xx` (except 429) — Permanent failure, no retry
+- `429` — Rate limited, retry with longer backoff
+- `5xx` — Temporary failure, retry
+- Timeout (10s) — Retry
+
+## Next Steps
+
+- [Error Handling](/docs/sdk/error-handling) — Handle webhook processing errors gracefully.
+- [Authentication](/docs/getting-started/authentication) — Secure your webhook endpoint.
