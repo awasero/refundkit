@@ -1,0 +1,147 @@
+---
+title: "Coming Soon"
+description: "Upcoming payment processor integrations for RefundKit including PayPal, Square, and Adyen."
+order: 2
+---
+
+# Coming Soon
+
+RefundKit is expanding payment processor support beyond Stripe. The following integrations are on the roadmap and will be available in upcoming releases.
+
+## PayPal
+
+**Status**: In development
+
+PayPal integration will support refunds against PayPal payments, including:
+
+- Refunds for PayPal Checkout orders
+- Refunds for PayPal payment captures
+- Partial and full refund support
+- PayPal sandbox and live environments
+
+The `PayPalProcessor` will follow the same interface as `StripeProcessor`:
+
+```typescript
+// Coming soon
+import { PayPalProcessor } from '@refundkit/sdk';
+
+const paypal = new PayPalProcessor({
+  clientId: 'your_client_id',
+  clientSecret: 'your_client_secret',
+  environment: 'sandbox', // or 'live'
+});
+```
+
+Once available, refunds will work the same way across processors:
+
+```typescript
+const { data, error } = await rk.refunds.create({
+  transactionId: 'PAYPAL-CAPTURE-ID',
+  amount: 2500,
+  reason: 'product_defective',
+  processor: 'paypal',
+});
+```
+
+## Square
+
+**Status**: Planned
+
+Square integration will support refunds against Square payments:
+
+- Refunds for Square payment IDs
+- Partial and full refund support
+- Square sandbox and production environments
+
+```typescript
+// Coming soon
+import { SquareProcessor } from '@refundkit/sdk';
+
+const square = new SquareProcessor({
+  accessToken: 'your_access_token',
+  environment: 'sandbox', // or 'production'
+});
+```
+
+## Adyen
+
+**Status**: Planned
+
+Adyen integration will support refunds through the Adyen platform:
+
+- Refunds for Adyen payment PSP references
+- Partial and full refund support
+- Adyen test and live environments
+
+```typescript
+// Coming soon
+import { AdyenProcessor } from '@refundkit/sdk';
+
+const adyen = new AdyenProcessor({
+  apiKey: 'your_api_key',
+  merchantAccount: 'your_merchant_account',
+  environment: 'test', // or 'live'
+});
+```
+
+## Building a Custom Processor
+
+If you need a processor that is not yet supported, you can implement the `PaymentProcessor` interface:
+
+```typescript
+import type {
+  PaymentProcessor,
+  RefundParams,
+  ProcessorRefundResult,
+  ProcessorStatus,
+  ProcessorCancelResult,
+  TransactionInfo,
+} from '@refundkit/sdk';
+
+class MyProcessor implements PaymentProcessor {
+  name = 'my_processor';
+
+  async processRefund(params: RefundParams): Promise<ProcessorRefundResult> {
+    // Call your payment provider's refund API
+    const result = await myPaymentApi.refund(params.transactionId, params.amount);
+
+    return {
+      externalRefundId: result.id,
+      status: result.success ? 'completed' : 'failed',
+      processedAt: new Date().toISOString(),
+    };
+  }
+
+  async getRefundStatus(externalId: string): Promise<ProcessorStatus> {
+    const status = await myPaymentApi.getRefund(externalId);
+    return {
+      externalRefundId: externalId,
+      status: status.state,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async cancelRefund(externalId: string): Promise<ProcessorCancelResult> {
+    const result = await myPaymentApi.cancelRefund(externalId);
+    return {
+      cancelled: result.success,
+      cancelledAt: result.success ? new Date().toISOString() : null,
+    };
+  }
+
+  async validateTransaction(transactionId: string): Promise<TransactionInfo> {
+    const txn = await myPaymentApi.getTransaction(transactionId);
+    return {
+      transactionId: txn.id,
+      amount: txn.amount,
+      currency: txn.currency,
+      processor: this.name,
+      valid: txn.status === 'paid' && !txn.refunded,
+    };
+  }
+}
+```
+
+## Stay Updated
+
+To be notified when new processor integrations launch, follow the [RefundKit changelog](https://refundkit.dev/changelog) or watch the GitHub repository for release announcements.

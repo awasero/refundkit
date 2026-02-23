@@ -1,0 +1,371 @@
+---
+title: "Setting Up RefundKit MCP Server with Claude"
+description: "A step-by-step tutorial for connecting the RefundKit MCP server to Claude Desktop to build an AI-powered refund assistant."
+date: "2024-01-29T10:00:00.000Z"
+author: "RefundKit Team"
+tags: ["tutorial", "mcp", "claude"]
+slug: "setting-up-refundkit-mcp-server-with-claude"
+---
+
+## Introduction
+
+The Model Context Protocol (MCP) is an open standard that allows AI assistants to interact with external tools and data sources in a structured, reliable way. Instead of asking an AI to generate API calls and hoping the format is correct, MCP provides a formal protocol where tools advertise their capabilities, the AI discovers and invokes them, and results flow back in a predictable format.
+
+RefundKit ships with a built-in MCP server that exposes refund operations as tools. This means you can connect it to any MCP-compatible AI assistant -- including Claude -- and give that assistant the ability to process refunds, check refund status, evaluate refund policies, list recent refunds, and cancel pending refunds.
+
+In this tutorial, we will walk through the complete process: installing the RefundKit SDK, configuring the MCP server, connecting it to Claude Desktop, testing the tools, and building a practical refund assistant workflow. By the end, you will have a working setup where you can ask Claude to handle refunds conversationally.
+
+## Prerequisites
+
+Before we begin, make sure you have the following:
+
+- **Node.js 18 or later** installed on your machine
+- **Claude Desktop** installed (the desktop application, not the web interface, since MCP requires a local process)
+- **A RefundKit API key** -- you can get one from the [RefundKit dashboard](https://app.refundkit.dev/api-keys)
+
+If you are using RefundKit in test mode, your API key will start with `rk_test_`. In production, it starts with `rk_live_`. For this tutorial, use a test key so you can experiment freely without affecting real transactions.
+
+## Step 1: Install the RefundKit SDK
+
+The RefundKit SDK includes both the TypeScript client library and the MCP server. Install it globally so it is available as a CLI command:
+
+```bash
+npm install -g @refundkit/sdk
+```
+
+Alternatively, if you prefer not to install globally, you can use `npx` to run it directly:
+
+```bash
+npx @refundkit/sdk
+```
+
+Verify the installation by checking the version:
+
+```bash
+npx @refundkit/sdk --version
+```
+
+The MCP server is bundled as the default binary entry point of the package. When you run `@refundkit/sdk`, it starts the MCP server using stdio transport, which is exactly what Claude Desktop expects.
+
+## Step 2: Configure Claude Desktop
+
+Claude Desktop reads MCP server configurations from a JSON file on your system. The file location depends on your operating system:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Open this file (create it if it does not exist) and add the RefundKit MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "npx",
+      "args": ["@refundkit/sdk"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Let us break down what each field does:
+
+- **`command`**: The executable to run. We use `npx` so it resolves the package automatically.
+- **`args`**: Arguments passed to the command. `["@refundkit/sdk"]` tells npx which package to run.
+- **`env`**: Environment variables passed to the process. The MCP server reads `REFUNDKIT_API_KEY` to authenticate with the RefundKit API.
+
+If you installed the SDK globally, you can use the binary name directly:
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "refundkit",
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Save the file and restart Claude Desktop for the changes to take effect.
+
+## Step 3: Verify the Connection
+
+After restarting Claude Desktop, you should see the RefundKit tools available in the tools panel. Click the tools icon (it looks like a hammer) in the Claude Desktop interface to see the list of available tools.
+
+You should see five tools:
+
+1. **refundkit_process_refund** -- Process a refund for a transaction
+2. **refundkit_check_refund_status** -- Check the current status of a refund
+3. **refundkit_list_refunds** -- List refunds with optional filters
+4. **refundkit_get_policy** -- Get the refund policy for a transaction
+5. **refundkit_cancel_refund** -- Cancel a pending refund
+
+If you do not see these tools, check the following:
+
+- Make sure the config file is in the correct location for your OS
+- Verify the JSON is valid (no trailing commas, correct quotes)
+- Confirm your API key is correct
+- Restart Claude Desktop completely (quit and reopen, not just close the window)
+
+You can also test the MCP server directly from the command line to verify it works:
+
+```bash
+REFUNDKIT_API_KEY=rk_test_your_key npx @refundkit/sdk
+```
+
+If the server starts without errors, it is working correctly. Press Ctrl+C to stop it.
+
+## Step 4: Test Individual Tools
+
+Now let us test each tool through Claude. Start a new conversation and try the following prompts.
+
+### Testing Policy Check
+
+Ask Claude to check if a transaction is eligible for a refund:
+
+```
+Can you check the refund policy for transaction tx_test_001?
+```
+
+Claude will use the `refundkit_get_policy` tool and return a structured response showing eligibility, conditions, and any deadlines.
+
+The response includes:
+
+- **`eligible`**: Whether the transaction qualifies for a refund
+- **`reason`**: A human-readable explanation of the eligibility decision
+- **`maxAmount`**: The maximum refund amount allowed (or null if no limit)
+- **`deadline`**: The last date a refund can be processed (or null if no deadline)
+- **`conditions`**: A list of conditions that must be met
+
+### Testing Refund Creation
+
+Ask Claude to process a refund:
+
+```
+Process a refund of $29.99 for transaction tx_test_001. The reason is that the product was defective.
+```
+
+Claude will use the `refundkit_process_refund` tool with these parameters:
+- `transactionId`: `"tx_test_001"`
+- `amount`: `2999` (amount in cents)
+- `reason`: `"product_defective"`
+
+Note that Claude should automatically convert dollar amounts to cents. If it does not, you can be explicit: "Process a refund of 2999 cents."
+
+### Testing Status Check
+
+After creating a refund, check its status:
+
+```
+What's the status of refund ref_abc123?
+```
+
+Claude will use the `refundkit_check_refund_status` tool and return the current status along with other refund details.
+
+### Testing Refund Listing
+
+Ask Claude to list recent refunds:
+
+```
+Show me all pending refunds.
+```
+
+Claude will use the `refundkit_list_refunds` tool with `status: "pending"` and return a list of matching refunds.
+
+### Testing Refund Cancellation
+
+Cancel a pending refund:
+
+```
+Cancel refund ref_abc123.
+```
+
+Claude will use the `refundkit_cancel_refund` tool. Note that only refunds in `pending` or `processing` status can be cancelled.
+
+## Step 5: Build a Refund Assistant Workflow
+
+Now that the individual tools work, let us build a more realistic workflow. Instead of testing tools one at a time, we will set up Claude as a full refund assistant.
+
+### Setting the System Context
+
+Start a new conversation with Claude and set the context:
+
+```
+You are a customer support assistant for an online store. When a customer
+asks for a refund, follow this workflow:
+
+1. First, check the refund policy for their transaction to confirm eligibility
+2. If eligible, confirm the refund details with the customer (amount, reason)
+3. Process the refund
+4. Provide the refund ID and expected timeline
+
+Always check the policy before processing a refund. If the transaction is
+not eligible, explain why and offer alternatives.
+```
+
+Now you can have a natural conversation:
+
+```
+Customer: Hi, I'd like a refund for my order. The transaction ID is tx_test_002
+and the product was damaged when it arrived. The charge was $49.99.
+```
+
+Claude will:
+1. Call `refundkit_get_policy` for `tx_test_002` to check eligibility
+2. Review the policy response
+3. If eligible, call `refundkit_process_refund` with the appropriate parameters
+4. Return the refund details to the customer in a conversational format
+
+This multi-step workflow demonstrates the real power of the MCP integration. Claude is not just executing a single API call -- it is reasoning about the situation, checking prerequisites, and executing a structured workflow.
+
+### Handling Edge Cases
+
+Test how Claude handles various edge cases:
+
+**Ineligible refund:**
+```
+I want a refund for transaction tx_test_old. It was from 6 months ago.
+```
+Claude should check the policy, find it ineligible, and explain why.
+
+**Partial refund:**
+```
+I ordered 3 items in transaction tx_test_003 but only want to return one.
+The item cost $15.00.
+```
+Claude should process a partial refund for 1500 cents.
+
+**Status inquiry:**
+```
+I requested a refund last week. The ID is ref_xyz789. Can you check on it?
+```
+Claude should check the status and provide an update.
+
+**Cancellation:**
+```
+Actually, I changed my mind about the refund ref_xyz789. Can you cancel it?
+```
+Claude should attempt to cancel and report the result.
+
+## Step 6: Advanced Configuration
+
+### Custom Base URL
+
+If you are running a self-hosted RefundKit instance or using a staging environment, you can configure the base URL:
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "npx",
+      "args": ["@refundkit/sdk"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_your_api_key_here",
+        "REFUNDKIT_BASE_URL": "https://staging-api.refundkit.dev"
+      }
+    }
+  }
+}
+```
+
+### Multiple Environments
+
+You can configure multiple RefundKit MCP servers for different environments:
+
+```json
+{
+  "mcpServers": {
+    "refundkit-test": {
+      "command": "npx",
+      "args": ["@refundkit/sdk"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_key_here"
+      }
+    },
+    "refundkit-production": {
+      "command": "npx",
+      "args": ["@refundkit/sdk"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_live_key_here"
+      }
+    }
+  }
+}
+```
+
+This way you can test against your test environment while having production access available when needed.
+
+### Programmatic MCP Server
+
+If you want to embed the MCP server in a larger application or customize its behavior, you can create it programmatically:
+
+```typescript
+import { createMcpServer } from '@refundkit/sdk/mcp';
+
+const server = createMcpServer(
+  process.env.REFUNDKIT_API_KEY,
+  process.env.REFUNDKIT_BASE_URL, // optional
+);
+
+// The server is now ready to handle MCP protocol messages
+// Connect it to your preferred transport
+```
+
+This is useful when you want to add custom middleware, logging, or additional tools alongside the RefundKit tools.
+
+## Step 7: Monitoring and Debugging
+
+### Viewing Refund Activity
+
+All refunds processed through the MCP server are visible in your RefundKit dashboard. You can filter by `initiatedBy: 'mcp'` to see only agent-initiated refunds:
+
+```typescript
+const { data: agentRefunds } = await rk.refunds.list({
+  // Filter in the dashboard or via API
+  limit: 50,
+});
+
+// Each refund includes initiatedBy field
+// agentRefunds.forEach(r => console.log(r.initiatedBy)); // 'mcp'
+```
+
+### Debugging Tool Calls
+
+If Claude is not using the tools correctly, check these common issues:
+
+1. **Amount format**: RefundKit expects amounts in the smallest currency unit (cents for USD). If Claude passes `29.99` instead of `2999`, the refund amount will be wrong. You can address this by mentioning "amounts are in cents" in your system prompt.
+
+2. **Reason codes**: The `reason` parameter accepts specific enum values: `product_not_received`, `product_defective`, `wrong_product`, `duplicate_charge`, `subscription_cancelled`, or `other`. Claude should map natural language reasons to these codes.
+
+3. **Missing required fields**: The `process_refund` tool requires `transactionId`, `amount`, and `reason`. If Claude does not have this information from the conversation, it should ask the customer before attempting to process.
+
+### Logging
+
+The MCP server logs errors to stderr. You can capture these logs by redirecting stderr when running the server manually:
+
+```bash
+REFUNDKIT_API_KEY=rk_test_key npx @refundkit/sdk 2> refundkit-mcp.log
+```
+
+In the Claude Desktop context, logs from the MCP server will appear in the Claude Desktop log files.
+
+## Conclusion
+
+Setting up the RefundKit MCP server with Claude Desktop is a straightforward process: install the SDK, add the configuration to Claude Desktop, and start using the tools. In about fifteen minutes, you can go from zero to having a fully functional refund assistant that can check policies, process refunds, monitor status, and cancel pending refunds.
+
+The real value emerges when you build workflows on top of the individual tools. By setting up Claude with a system prompt that defines a refund workflow, you create an assistant that handles the entire refund lifecycle conversationally -- checking eligibility before processing, communicating clearly with customers, and handling edge cases gracefully.
+
+Here are your next steps:
+
+1. **Get a test API key** from the [RefundKit dashboard](https://app.refundkit.dev/api-keys) if you do not have one
+2. **Configure Claude Desktop** using the instructions in Step 2
+3. **Test the individual tools** to make sure everything is connected
+4. **Build a workflow** with a system prompt that defines your refund process
+5. **Monitor refund activity** in the dashboard to verify the assistant is working correctly
+
+Once you are comfortable with the test environment, switching to production is as simple as replacing the test API key with a live one. The tools, workflows, and behaviors all remain the same.

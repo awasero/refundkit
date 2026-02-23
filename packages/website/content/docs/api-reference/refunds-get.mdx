@@ -1,0 +1,148 @@
+---
+title: "Get Refund"
+description: "GET /v1/refunds/:id — Retrieve a single refund by its ID."
+order: 2
+---
+
+# Get Refund
+
+```
+GET /v1/refunds/:id
+```
+
+Retrieves a single refund by its RefundKit ID. Returns the full refund object including current status, processor details, and metadata.
+
+## Authentication
+
+Requires a Bearer token in the `Authorization` header.
+
+```
+Authorization: Bearer rk_live_your_api_key_here
+```
+
+## Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | `string` | The RefundKit refund ID (e.g., `ref_abc123def456`) |
+
+## Response
+
+### Success (200)
+
+```json
+{
+  "data": {
+    "id": "ref_abc123def456",
+    "organizationId": "org_xyz789",
+    "externalRefundId": "re_1N4HcTKz9cXRvFYs",
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "currency": "usd",
+    "reason": "product_defective",
+    "status": "completed",
+    "processor": "stripe",
+    "metadata": {
+      "orderId": "order_12345"
+    },
+    "initiatedBy": "api",
+    "createdAt": "2026-02-22T10:30:00.000Z",
+    "updatedAt": "2026-02-22T10:32:15.000Z"
+  }
+}
+```
+
+### Not Found (404)
+
+```json
+{
+  "error": {
+    "message": "Refund not found",
+    "code": "not_found"
+  }
+}
+```
+
+### Unauthorized (401)
+
+```json
+{
+  "error": {
+    "message": "Invalid API key",
+    "code": "invalid_api_key"
+  }
+}
+```
+
+## Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique RefundKit refund identifier |
+| `organizationId` | `string` | The organization that owns this refund |
+| `externalRefundId` | `string \| null` | The refund ID from the payment processor (e.g., Stripe `re_xxx`). Null if not yet processed. |
+| `transactionId` | `string` | The original transaction/charge ID |
+| `amount` | `number` | Refund amount in smallest currency unit |
+| `currency` | `string` | Three-letter ISO currency code |
+| `reason` | `string` | Refund reason |
+| `status` | `string` | Current status: `pending`, `processing`, `completed`, `failed`, or `cancelled` |
+| `processor` | `string` | Payment processor name |
+| `metadata` | `object \| null` | Custom metadata attached to the refund |
+| `initiatedBy` | `string` | How the refund was initiated: `api`, `dashboard`, or `mcp` |
+| `createdAt` | `string` | ISO 8601 creation timestamp |
+| `updatedAt` | `string` | ISO 8601 last update timestamp |
+
+## SDK Example
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.refunds.get('ref_abc123def456');
+
+if (error) {
+  if (error.code === 'not_found') {
+    console.log('Refund does not exist');
+  } else {
+    console.error(error.message);
+  }
+} else {
+  console.log(`Refund ${data.id}: ${data.status}`);
+  console.log(`Amount: ${data.amount} ${data.currency}`);
+  console.log(`Processor refund: ${data.externalRefundId}`);
+}
+```
+
+## cURL Example
+
+```bash
+curl https://api.refundkit.dev/v1/refunds/ref_abc123def456 \
+  -H "Authorization: Bearer rk_live_your_api_key_here"
+```
+
+## Polling for Status Updates
+
+Refunds may take time to process. You can poll this endpoint to track progress:
+
+```typescript
+async function waitForCompletion(rk: RefundKit, refundId: string): Promise<Refund> {
+  const maxAttempts = 10;
+  const delayMs = 2000;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const { data, error } = await rk.refunds.get(refundId);
+    if (error) throw error;
+
+    if (data.status === 'completed' || data.status === 'failed') {
+      return data;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  throw new Error('Refund did not complete within the expected time');
+}
+```
+
+For real-time updates, use [webhooks](/docs/webhooks) instead of polling.

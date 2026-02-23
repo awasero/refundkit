@@ -1,0 +1,63 @@
+---
+title: "Introduction to RefundKit"
+description: "RefundKit is refund infrastructure for AI agents and modern applications, providing a unified API to process refunds across payment processors."
+order: 1
+---
+
+# Introduction to RefundKit
+
+RefundKit is refund infrastructure built for the AI era. It provides a unified API and SDK to process, track, and manage refunds across payment processors -- and an MCP server that lets AI agents handle refunds autonomously.
+
+## The Problem
+
+Refund processing is deceptively complex. Each payment processor has its own API, status codes, timing constraints, and edge cases. When you add AI agents to the mix -- customer support bots, automated dispute handlers, internal tools -- the complexity multiplies. Your agents need a consistent, safe interface to issue refunds without direct access to your Stripe dashboard.
+
+## What RefundKit Does
+
+RefundKit sits between your application (or AI agent) and your payment processors. It provides:
+
+- **Unified refund API** -- One interface to process refunds across Stripe, with PayPal, Square, and Adyen coming soon.
+- **MCP server** -- A Model Context Protocol server that gives AI agents like Claude, GPT, and LangChain-based agents the ability to process refunds as tool calls.
+- **Policy enforcement** -- Check refund eligibility against your configured policies before processing.
+- **Full audit trail** -- Every refund is tracked with status, timestamps, initiator (API, dashboard, or MCP), and metadata.
+- **Type-safe SDK** -- A TypeScript SDK with Zod validation, discriminated error unions, and full type exports.
+
+## Who Is RefundKit For?
+
+- **Teams building AI customer support agents** that need to issue refunds during conversations.
+- **SaaS companies** that want a programmatic refund layer with policy checks and audit logging.
+- **Developers integrating multiple payment processors** who want one consistent refund interface.
+- **Anyone using the Model Context Protocol** to give AI agents tool-use capabilities over financial operations.
+
+## How It Works
+
+```
+Your App / AI Agent
+        |
+   RefundKit SDK or MCP Server
+        |
+   RefundKit API (api.refundkit.dev)
+        |
+   Payment Processor (Stripe, etc.)
+```
+
+1. You (or your AI agent) call `refunds.create()` or use the `refundkit_process_refund` MCP tool.
+2. RefundKit validates the request, checks your policies, and routes the refund to the correct payment processor.
+3. The processor executes the refund and RefundKit tracks status updates.
+4. You receive a structured response with the refund status, ID, and metadata.
+
+## Key Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Refund** | A record representing a refund operation against a specific transaction. |
+| **Transaction ID** | The original charge or payment ID from your payment processor (e.g., a Stripe charge ID like `ch_xxx`). |
+| **Policy** | Rules that determine whether a transaction is eligible for a refund, including amount limits and time deadlines. |
+| **Processor** | A payment processor integration (e.g., Stripe) that executes the actual refund. |
+| **MCP Tool** | A tool exposed via the Model Context Protocol that AI agents can call to perform refund operations. |
+
+## Next Steps
+
+- [Quickstart](/docs/getting-started/quickstart) -- Process your first refund in under 5 minutes.
+- [Authentication](/docs/getting-started/authentication) -- Learn about API keys and authentication.
+- [MCP Server](/docs/mcp-server) -- Set up RefundKit for AI agent integration.

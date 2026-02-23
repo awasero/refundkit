@@ -1,0 +1,78 @@
+---
+title: "MCP Server Overview"
+description: "Learn what the RefundKit MCP server is, why AI agents need it, and how it enables autonomous refund processing through the Model Context Protocol."
+order: 1
+---
+
+# MCP Server Overview
+
+The RefundKit MCP server gives AI agents the ability to process refunds as tool calls through the [Model Context Protocol](https://modelcontextprotocol.io). Instead of building custom integrations for every AI framework, you run one MCP server and any compatible agent can issue refunds, check statuses, and enforce policies.
+
+## What Is MCP?
+
+The Model Context Protocol (MCP) is an open standard for connecting AI models to external tools and data sources. It defines a structured way for AI agents to discover available tools, understand their parameters, and call them during conversations.
+
+Think of MCP as a "USB-C for AI" -- a universal plug that lets any compatible AI model use any compatible tool without custom wiring.
+
+## Why AI Agents Need Refund Tools
+
+AI customer support agents are increasingly handling the full lifecycle of customer interactions: answering questions, looking up orders, and resolving issues. But when a customer needs a refund, most agents hit a wall -- they either escalate to a human or require custom code to call payment APIs.
+
+RefundKit's MCP server solves this by exposing five tools that handle the complete refund workflow:
+
+| Tool | Purpose |
+|------|---------|
+| `refundkit_process_refund` | Initiate a refund for a transaction |
+| `refundkit_check_refund_status` | Check the current status of a refund |
+| `refundkit_list_refunds` | List refunds with filters and pagination |
+| `refundkit_get_policy` | Check whether a transaction is eligible for refund |
+| `refundkit_cancel_refund` | Cancel a pending refund |
+
+When an AI agent connects to the RefundKit MCP server, it automatically discovers these tools and can use them during conversations with customers.
+
+## How It Works
+
+```
+Customer: "I want a refund for order #12345"
+        |
+   AI Agent (Claude, GPT, etc.)
+        |
+   MCP Protocol (stdio or HTTP)
+        |
+   RefundKit MCP Server
+        |
+   RefundKit API
+        |
+   Stripe (or other processor)
+        |
+   AI Agent: "I've processed your $25.00 refund.
+              Refund ID: ref_abc123. It should appear
+              in 5-10 business days."
+```
+
+1. The AI agent receives a customer's refund request.
+2. The agent calls `refundkit_get_policy` to verify eligibility.
+3. If eligible, it calls `refundkit_process_refund` to initiate the refund.
+4. The MCP server routes the request through the RefundKit API to the payment processor.
+5. The agent receives a structured response and communicates the result to the customer.
+
+## Transport Modes
+
+The MCP server supports two transport modes:
+
+- **stdio** -- Runs as a child process. The AI framework launches the server and communicates over stdin/stdout. Best for local development and desktop AI applications like Claude Desktop.
+- **HTTP (SSE)** -- Runs as a standalone HTTP server. AI agents connect over the network. Best for production deployments and multi-agent setups.
+
+## Supported Frameworks
+
+RefundKit's MCP server works with any MCP-compatible framework:
+
+- [Claude Desktop](/docs/mcp-server/claude) -- Anthropic's desktop application
+- [OpenAI Agents SDK](/docs/mcp-server/openai) -- OpenAI's agent framework
+- [LangChain](/docs/mcp-server/langchain) -- Popular Python/JS agent framework
+- [CrewAI](/docs/mcp-server/crewai) -- Multi-agent orchestration framework
+
+## Next Steps
+
+- [Setup](/docs/mcp-server/setup) -- Install and configure the MCP server.
+- [Tools Reference](/docs/mcp-server/tools) -- Detailed documentation for all five tools.

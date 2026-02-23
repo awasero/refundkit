@@ -1,0 +1,153 @@
+---
+title: "OpenAI Agents SDK Integration"
+description: "Use RefundKit MCP tools with the OpenAI Agents SDK to build AI agents that can process refunds autonomously."
+order: 5
+---
+
+# OpenAI Agents SDK Integration
+
+The [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) supports MCP servers as tool providers. This guide shows how to connect the RefundKit MCP server to an OpenAI agent so it can process refunds during conversations.
+
+## Prerequisites
+
+- Python 3.10+
+- `openai-agents` package installed
+- Node.js 18+ (for the MCP server)
+- A RefundKit API key
+
+## Installation
+
+```bash
+pip install openai-agents
+npm install @refundkit/sdk
+```
+
+## Basic Setup
+
+The OpenAI Agents SDK can connect to MCP servers using stdio transport:
+
+```python
+import asyncio
+import os
+from agents import Agent, Runner
+from agents.mcp import MCPServerStdio
+
+async def main():
+    # Configure the RefundKit MCP server
+    refundkit_server = MCPServerStdio(
+        name="refundkit",
+        command="npx",
+        args=["@refundkit/sdk"],
+        env={
+            "REFUNDKIT_API_KEY": os.environ["REFUNDKIT_API_KEY"],
+        },
+    )
+
+    # Create an agent with access to RefundKit tools
+    agent = Agent(
+        name="Customer Support",
+        instructions="""You are a customer support agent. You can process
+        refunds using RefundKit tools. Always check the refund policy
+        before processing a refund. Be clear about refund amounts
+        and timelines.""",
+        mcp_servers=[refundkit_server],
+    )
+
+    # Run the agent
+    async with refundkit_server:
+        result = await Runner.run(
+            agent,
+            "Customer wants a refund for transaction ch_1N4HbSKz9cXRvFYr. "
+            "The product was defective and the charge was $25.00.",
+        )
+        print(result.final_output)
+
+asyncio.run(main())
+```
+
+## Multi-Agent Setup
+
+You can create specialized agents that share access to RefundKit tools:
+
+```python
+import asyncio
+import os
+from agents import Agent, Runner
+from agents.mcp import MCPServerStdio
+
+async def main():
+    refundkit_server = MCPServerStdio(
+        name="refundkit",
+        command="npx",
+        args=["@refundkit/sdk"],
+        env={"REFUNDKIT_API_KEY": os.environ["REFUNDKIT_API_KEY"]},
+    )
+
+    # Policy checker agent
+    policy_agent = Agent(
+        name="Policy Checker",
+        instructions="""Check refund eligibility using refundkit_get_policy.
+        Report whether the refund is eligible and any conditions.""",
+        mcp_servers=[refundkit_server],
+    )
+
+    # Refund processor agent
+    refund_agent = Agent(
+        name="Refund Processor",
+        instructions="""Process approved refunds using refundkit_process_refund.
+        Always confirm the amount and reason before processing.""",
+        mcp_servers=[refundkit_server],
+    )
+
+    # Orchestrator agent
+    orchestrator = Agent(
+        name="Support Lead",
+        instructions="""You coordinate refund requests. First delegate to
+        the Policy Checker to verify eligibility, then delegate to
+        the Refund Processor to execute the refund.""",
+        handoffs=[policy_agent, refund_agent],
+    )
+
+    async with refundkit_server:
+        result = await Runner.run(
+            orchestrator,
+            "Process a $50 refund for transaction ch_2M3GaSJy8bWqEXQp. "
+            "Reason: wrong product shipped.",
+        )
+        print(result.final_output)
+
+asyncio.run(main())
+```
+
+## HTTP Transport
+
+For production deployments, you can connect to a remote RefundKit MCP server over HTTP:
+
+```python
+from agents.mcp import MCPServerHTTP
+
+refundkit_server = MCPServerHTTP(
+    name="refundkit",
+    url="https://your-mcp-server.example.com/sse",
+)
+```
+
+## Error Handling
+
+The OpenAI Agents SDK handles MCP tool errors automatically. When a RefundKit tool returns an error (e.g., invalid transaction ID), the agent receives the error message and can communicate it to the user naturally.
+
+For programmatic error handling, wrap the runner call:
+
+```python
+from agents import RunError
+
+try:
+    result = await Runner.run(agent, user_message)
+except RunError as e:
+    print(f"Agent run failed: {e}")
+```
+
+## Next Steps
+
+- [MCP Tools Reference](/docs/mcp-server/tools) -- Full documentation for all five tools.
+- [LangChain Integration](/docs/mcp-server/langchain) -- Use RefundKit with LangChain agents.

@@ -1,0 +1,139 @@
+---
+title: "Cancel Refund"
+description: "POST /v1/refunds/:id/cancel — Cancel a pending or processing refund."
+order: 4
+---
+
+# Cancel Refund
+
+```
+POST /v1/refunds/:id/cancel
+```
+
+Cancels a refund that is currently in `pending` or `processing` status. Refunds in terminal states (`completed`, `failed`, or `cancelled`) cannot be cancelled.
+
+## Authentication
+
+Requires a Bearer token in the `Authorization` header.
+
+```
+Authorization: Bearer rk_live_your_api_key_here
+```
+
+## Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | `string` | The RefundKit refund ID to cancel (e.g., `ref_abc123def456`) |
+
+## Request Body
+
+No request body is required. Send an empty JSON object or no body at all.
+
+```json
+{}
+```
+
+## Response
+
+### Success (200)
+
+The refund is returned with its status updated to `cancelled`:
+
+```json
+{
+  "data": {
+    "id": "ref_abc123def456",
+    "organizationId": "org_xyz789",
+    "externalRefundId": "re_1N4HcTKz9cXRvFYs",
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "currency": "usd",
+    "reason": "product_defective",
+    "status": "cancelled",
+    "processor": "stripe",
+    "metadata": null,
+    "initiatedBy": "api",
+    "createdAt": "2026-02-22T10:30:00.000Z",
+    "updatedAt": "2026-02-22T10:35:00.000Z"
+  }
+}
+```
+
+### Not Found (404)
+
+```json
+{
+  "error": {
+    "message": "Refund not found",
+    "code": "not_found"
+  }
+}
+```
+
+### Not Cancellable (409)
+
+Returned when the refund is in a terminal state:
+
+```json
+{
+  "error": {
+    "message": "Refund cannot be cancelled — status is 'completed'",
+    "code": "refund_not_cancellable"
+  }
+}
+```
+
+## Cancellable States
+
+| Current Status | Can Cancel? |
+|----------------|-------------|
+| `pending` | Yes |
+| `processing` | Yes (cancellation sent to processor) |
+| `completed` | No |
+| `failed` | No |
+| `cancelled` | No (already cancelled) |
+
+When cancelling a refund in `processing` status, RefundKit also sends a cancellation request to the payment processor. If the processor has already completed the refund, the cancellation may fail and the refund status will remain `processing` or change to `completed`.
+
+## SDK Example
+
+```typescript
+import RefundKit, { ErrorCode } from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.refunds.cancel('ref_abc123def456');
+
+if (error) {
+  switch (error.code) {
+    case ErrorCode.NOT_FOUND:
+      console.log('Refund does not exist');
+      break;
+    case ErrorCode.REFUND_NOT_CANCELLABLE:
+      console.log('Refund is already in a terminal state');
+      break;
+    default:
+      console.error('Cancel failed:', error.message);
+  }
+} else {
+  console.log(`Refund ${data.id} cancelled at ${data.updatedAt}`);
+}
+```
+
+## cURL Example
+
+```bash
+curl -X POST https://api.refundkit.dev/v1/refunds/ref_abc123def456/cancel \
+  -H "Authorization: Bearer rk_live_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+## Use Cases
+
+**Customer changed their mind**: A customer initially requested a refund but then resolved the issue. Cancel the pending refund before it processes.
+
+**Duplicate refund request**: An AI agent or API integration accidentally created a duplicate refund. Cancel the second one before it processes.
+
+**Fraud detection**: Your fraud system flags a refund as suspicious after creation. Cancel it while it is still pending.

@@ -1,0 +1,150 @@
+---
+title: "TypeScript"
+description: "TypeScript types, interfaces, and type inference for the RefundKit SDK. Full type safety for refund operations."
+order: 16
+---
+
+# TypeScript
+
+The RefundKit SDK is written in TypeScript and ships with complete type definitions. Every method, parameter, and response is fully typed, providing autocomplete and compile-time safety in your editor.
+
+## Requirements
+
+- TypeScript 5.0 or later
+- `strict` mode recommended for full type inference
+
+## Core Types
+
+### RefundKitConfig
+
+The configuration object passed to the constructor:
+
+```typescript
+interface RefundKitConfig {
+  apiKey: string;
+  baseUrl?: string;
+  timeout?: number;
+}
+```
+
+### Refund Object
+
+The refund object returned by all refund methods:
+
+```typescript
+interface Refund {
+  id: string;              // e.g., 'ref_xyz789'
+  transactionId: string;   // e.g., 'ch_1N4HbSKz9cXRvFYr'
+  amount: number;          // in smallest currency unit
+  reason: string;
+  status: RefundStatus;
+  createdAt: string;       // ISO 8601
+  updatedAt: string;       // ISO 8601
+}
+
+type RefundStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+```
+
+### RefundKitError
+
+The error object returned when an operation fails:
+
+```typescript
+interface RefundKitError {
+  message: string;
+  code: string;
+  statusCode: number;
+}
+```
+
+## Response Types
+
+Every SDK method returns a typed `{ data, error }` tuple. The exact type of `data` depends on the method:
+
+```typescript
+// rk.refunds.create() returns { data: Refund | null, error: RefundKitError | null }
+const { data, error } = await rk.refunds.create({
+  transactionId: 'ch_xxx',
+  amount: 1000,
+  reason: 'other',
+});
+
+if (data) {
+  data.id;     // string -- fully typed
+  data.status; // RefundStatus -- autocomplete works
+}
+```
+
+### Method Return Types
+
+| Method | `data` Type |
+|--------|-------------|
+| `rk.refunds.create()` | `Refund` |
+| `rk.refunds.get()` | `Refund` |
+| `rk.refunds.list()` | `Refund[]` |
+| `rk.refunds.cancel()` | `Refund` |
+| `rk.policies.check()` | `PolicyCheckResult` |
+
+### PolicyCheckResult
+
+```typescript
+interface PolicyCheckResult {
+  eligible: boolean;
+  maxAmount: number;
+  reason: string | null;
+}
+```
+
+## Type Narrowing
+
+The `{ data, error }` pattern works naturally with TypeScript narrowing. After checking for `error`, TypeScript knows `data` is non-null:
+
+```typescript
+const { data, error } = await rk.refunds.get('ref_xyz789');
+
+if (error) {
+  // error is RefundKitError (non-null)
+  // data is null
+  console.error(error.code);
+  return;
+}
+
+// data is Refund (non-null)
+// error is null
+console.log(data.id);
+console.log(data.status);
+```
+
+## Input Validation Types
+
+The SDK uses Zod schemas internally, but you do not need to import Zod in your code. The TypeScript types for method parameters are inferred from the schemas:
+
+```typescript
+// These types are enforced at compile time
+await rk.refunds.create({
+  transactionId: 'ch_xxx',  // string (required)
+  amount: 1000,              // number (required)
+  reason: 'other',           // string (required)
+});
+
+await rk.refunds.list({
+  status: 'pending',         // RefundStatus (optional)
+  transactionId: 'ch_xxx',   // string (optional)
+});
+```
+
+## Utility Exports
+
+The SDK exports a helper function for working with API keys:
+
+```typescript
+import { getApiKeyEnvironment } from '@refundkit/sdk';
+
+const env = getApiKeyEnvironment('rk_test_abc123');
+// Type: 'test' | 'live' | null
+```
+
+## Next Steps
+
+- [Error Handling](/docs/sdk/error-handling) -- Error codes and handling strategies.
+- [API Reference](/docs/api-reference/refunds-create) -- REST API endpoint documentation.

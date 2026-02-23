@@ -1,0 +1,148 @@
+---
+title: "LangChain Integration"
+description: "Integrate RefundKit MCP tools into LangChain agents for AI-powered refund processing."
+order: 6
+---
+
+# LangChain Integration
+
+LangChain supports MCP servers through the `langchain-mcp-adapters` package, which converts MCP tools into LangChain-compatible tools. This guide shows how to connect RefundKit to a LangChain agent.
+
+## Prerequisites
+
+- Python 3.10+
+- Node.js 18+ (for the MCP server)
+- A RefundKit API key
+
+## Installation
+
+```bash
+pip install langchain langchain-openai langchain-mcp-adapters langgraph
+npm install @refundkit/sdk
+```
+
+## Basic Setup
+
+Use the `MCPToolkit` from `langchain-mcp-adapters` to load RefundKit tools into a LangChain agent:
+
+```python
+import asyncio
+import os
+from langchain_openai import ChatOpenAI
+from langchain_mcp_adapters.client import MCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
+from langgraph.prebuilt import create_react_agent
+
+async def main():
+    # Connect to the RefundKit MCP server
+    client = MCPClient(
+        server_params={
+            "command": "npx",
+            "args": ["@refundkit/sdk"],
+            "env": {
+                "REFUNDKIT_API_KEY": os.environ["REFUNDKIT_API_KEY"],
+            },
+        }
+    )
+
+    async with client:
+        # Load MCP tools as LangChain tools
+        tools = await load_mcp_tools(client)
+
+        # Create a ReAct agent with RefundKit tools
+        llm = ChatOpenAI(model="gpt-4o")
+        agent = create_react_agent(llm, tools)
+
+        # Run the agent
+        result = await agent.ainvoke({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Check if transaction ch_1N4HbSKz9cXRvFYr is eligible "
+                        "for a $25 refund, and if so, process it. "
+                        "The reason is product_defective."
+                    ),
+                }
+            ]
+        })
+
+        # Print the agent's response
+        for message in result["messages"]:
+            if hasattr(message, "content") and message.content:
+                print(f"{message.type}: {message.content}")
+
+asyncio.run(main())
+```
+
+## Using with Anthropic
+
+LangChain works with multiple LLM providers. Here is the same setup using Claude:
+
+```python
+from langchain_anthropic import ChatAnthropic
+
+llm = ChatAnthropic(model="claude-sonnet-4-20250514")
+agent = create_react_agent(llm, tools)
+```
+
+## Custom Agent with System Prompt
+
+Add a system prompt to guide the agent's behavior around refunds:
+
+```python
+from langgraph.prebuilt import create_react_agent
+
+system_prompt = """You are a refund processing assistant. Follow these rules:
+
+1. Always check the refund policy before processing a refund.
+2. If the policy says the transaction is not eligible, explain why to the user.
+3. For eligible refunds, confirm the amount and reason before processing.
+4. After processing, provide the refund ID and expected timeline.
+5. Never process a refund without a valid reason."""
+
+agent = create_react_agent(llm, tools, prompt=system_prompt)
+```
+
+## Tool Filtering
+
+If you only want to expose specific RefundKit tools to the agent, filter them after loading:
+
+```python
+async with client:
+    all_tools = await load_mcp_tools(client)
+
+    # Only allow policy checks and status lookups (no processing)
+    read_only_tools = [
+        t for t in all_tools
+        if t.name in [
+            "refundkit_get_policy",
+            "refundkit_check_refund_status",
+            "refundkit_list_refunds",
+        ]
+    ]
+
+    agent = create_react_agent(llm, read_only_tools)
+```
+
+This is useful for building agents with limited permissions -- for example, a tier-1 support agent that can check refund status but cannot issue new refunds.
+
+## Streaming Responses
+
+LangGraph agents support streaming for real-time output:
+
+```python
+async for event in agent.astream_events(
+    {"messages": [{"role": "user", "content": "List all pending refunds"}]},
+    version="v2",
+):
+    if event["event"] == "on_chat_model_stream":
+        chunk = event["data"]["chunk"]
+        if chunk.content:
+            print(chunk.content, end="", flush=True)
+```
+
+## Next Steps
+
+- [CrewAI Integration](/docs/mcp-server/crewai) -- Use RefundKit with multi-agent crews.
+- [MCP Tools Reference](/docs/mcp-server/tools) -- Detailed parameter and response documentation.

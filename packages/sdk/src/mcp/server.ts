@@ -1,0 +1,68 @@
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import { RefundKit } from '../index.js';
+import { processRefundTool, handleProcessRefund } from './tools/process-refund.js';
+import { checkStatusTool, handleCheckStatus } from './tools/check-status.js';
+import { listRefundsTool, handleListRefunds } from './tools/list-refunds.js';
+import { getPolicyTool, handleGetPolicy } from './tools/get-policy.js';
+import { cancelRefundTool, handleCancelRefund } from './tools/cancel-refund.js';
+
+const TOOLS = [processRefundTool, checkStatusTool, listRefundsTool, getPolicyTool, cancelRefundTool];
+
+type ToolHandler = (rk: RefundKit, args: Record<string, unknown>) => Promise<{
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+}>;
+
+const HANDLERS: Record<string, ToolHandler> = {
+  [processRefundTool.name]: handleProcessRefund,
+  [checkStatusTool.name]: handleCheckStatus,
+  [listRefundsTool.name]: handleListRefunds,
+  [getPolicyTool.name]: handleGetPolicy,
+  [cancelRefundTool.name]: handleCancelRefund,
+};
+
+export function createMcpServer(apiKey: string, baseUrl?: string): Server {
+  const rk = new RefundKit({ apiKey, baseUrl });
+
+  const server = new Server(
+    { name: 'refundkit', version: '0.1.0' },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: TOOLS,
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const handler = HANDLERS[name];
+
+    if (!handler) {
+      return {
+        content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
+        isError: true,
+      };
+    }
+
+    return handler(rk, (args ?? {}) as Record<string, unknown>);
+  });
+
+  return server;
+}
+
+export async function startMcpServer(): Promise<void> {
+  const apiKey = process.env.REFUNDKIT_API_KEY;
+  if (!apiKey) {
+    console.error('REFUNDKIT_API_KEY environment variable is required');
+    process.exit(1);
+  }
+
+  const server = createMcpServer(apiKey, process.env.REFUNDKIT_BASE_URL);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}

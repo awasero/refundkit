@@ -1,0 +1,169 @@
+---
+title: "Check Policy"
+description: "POST /v1/policies/check — Check refund eligibility for a transaction against configured policies."
+order: 5
+---
+
+# Check Policy
+
+```
+POST /v1/policies/check
+```
+
+Evaluates whether a transaction is eligible for a refund based on your organization's configured refund policies. Returns eligibility status, conditions, amount limits, and deadlines.
+
+## Authentication
+
+Requires a Bearer token in the `Authorization` header.
+
+```
+Authorization: Bearer rk_live_your_api_key_here
+```
+
+## Request Body
+
+```json
+{
+  "transactionId": "ch_1N4HbSKz9cXRvFYr",
+  "amount": 2500
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transactionId` | `string` | Yes | The transaction ID to check eligibility for. Must not be empty. |
+| `amount` | `number` | No | Specific refund amount to validate against policy limits. Must be positive if provided. |
+
+When `amount` is provided, the policy check validates whether that specific amount is within the allowed refund limit. When omitted, the response indicates general eligibility and the maximum amount that could be refunded.
+
+## Response
+
+### Eligible (200)
+
+```json
+{
+  "data": {
+    "eligible": true,
+    "reason": "Transaction is within the 30-day refund window",
+    "maxAmount": 5000,
+    "deadline": "2026-03-22T10:30:00.000Z",
+    "conditions": [
+      "Refund must be requested within 30 days of purchase",
+      "Maximum refund amount is the original transaction amount"
+    ]
+  }
+}
+```
+
+### Not Eligible (200)
+
+Note: Ineligible transactions still return a 200 status. The `eligible` field indicates the result.
+
+```json
+{
+  "data": {
+    "eligible": false,
+    "reason": "Transaction exceeds the 30-day refund window",
+    "maxAmount": null,
+    "deadline": null,
+    "conditions": [
+      "Refund window closed on 2026-01-15T10:30:00.000Z"
+    ]
+  }
+}
+```
+
+### Amount Exceeds Limit (200)
+
+```json
+{
+  "data": {
+    "eligible": false,
+    "reason": "Requested amount of 5000 exceeds the maximum refundable amount of 3000",
+    "maxAmount": 3000,
+    "deadline": "2026-03-22T10:30:00.000Z",
+    "conditions": [
+      "Original transaction amount: 5000",
+      "Previous partial refund: 2000",
+      "Remaining refundable amount: 3000"
+    ]
+  }
+}
+```
+
+### Validation Error (400)
+
+```json
+{
+  "error": {
+    "message": "Transaction ID is required",
+    "code": "validation_error"
+  }
+}
+```
+
+## Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eligible` | `boolean` | Whether the transaction qualifies for a refund |
+| `reason` | `string` | Human-readable explanation of the eligibility decision |
+| `maxAmount` | `number \| null` | Maximum refundable amount in smallest currency unit. Null when not eligible. |
+| `deadline` | `string \| null` | ISO 8601 deadline for requesting a refund. Null when not eligible or no deadline. |
+| `conditions` | `string[]` | List of applicable conditions and constraints |
+
+## SDK Example
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.policies.check({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,
+});
+
+if (error) {
+  console.error('Policy check failed:', error.message);
+} else if (data.eligible) {
+  console.log('Eligible for refund');
+  console.log('Max amount:', data.maxAmount);
+  console.log('Deadline:', data.deadline);
+  console.log('Conditions:', data.conditions.join(', '));
+} else {
+  console.log('Not eligible:', data.reason);
+}
+```
+
+## cURL Example
+
+```bash
+curl -X POST https://api.refundkit.dev/v1/policies/check \
+  -H "Authorization: Bearer rk_live_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500
+  }'
+```
+
+## Best Practice
+
+Always call the policy check endpoint before creating a refund. This prevents unnecessary API calls and processor requests for ineligible transactions, and gives you structured data to explain the decision to the customer or AI agent.
+
+```typescript
+const { data: policy } = await rk.policies.check({ transactionId, amount });
+
+if (!policy?.eligible) {
+  return res.status(422).json({
+    message: policy?.reason ?? 'Unable to check refund eligibility',
+    conditions: policy?.conditions ?? [],
+  });
+}
+
+// Safe to proceed with refund
+const { data: refund } = await rk.refunds.create({ transactionId, amount, reason });
+```

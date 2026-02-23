@@ -1,0 +1,123 @@
+---
+title: "Authentication"
+description: "Learn about RefundKit API key types, how to obtain and manage keys, and how authentication works with Bearer tokens."
+order: 3
+---
+
+# Authentication
+
+All RefundKit API requests require authentication via API keys. This guide covers key types, how to obtain them, and how to use them securely.
+
+## API Key Types
+
+RefundKit uses prefixed API keys to distinguish between environments:
+
+| Prefix | Environment | Purpose |
+|--------|-------------|---------|
+| `rk_live_` | Production | Processes real refunds against live payment processors. |
+| `rk_test_` | Test / Sandbox | Processes refunds against sandbox/test processor accounts. No real money moves. |
+
+Both key types are 32 random characters following the prefix, for example:
+
+```
+rk_test_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345
+rk_live_<your-live-key-here>
+```
+
+## Obtaining API Keys
+
+1. Sign in to the [RefundKit Dashboard](https://app.refundkit.dev).
+2. Navigate to **Settings** > **API Keys**.
+3. Click **Create API Key** and select the environment (test or live).
+4. Copy the key immediately -- it is only shown once. The dashboard stores a SHA-256 hash, not the plaintext key.
+
+You can create multiple keys per environment. Each key can be revoked independently without affecting others.
+
+## Using API Keys
+
+### SDK Authentication
+
+Pass your API key when initializing the SDK:
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY!,
+});
+```
+
+The SDK automatically sends the key as a Bearer token in the `Authorization` header of every request.
+
+### Direct API Authentication
+
+If you are calling the REST API directly, include the key in the `Authorization` header:
+
+```bash
+curl -X POST https://api.refundkit.dev/v1/refunds \
+  -H "Authorization: Bearer rk_test_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345" \
+  -H "Content-Type: application/json" \
+  -d '{"transactionId": "ch_xxx", "amount": 1000, "reason": "other"}'
+```
+
+### MCP Server Authentication
+
+The MCP server reads the API key from the `REFUNDKIT_API_KEY` environment variable:
+
+```bash
+REFUNDKIT_API_KEY=rk_test_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345 npx @refundkit/sdk
+```
+
+## Security Best Practices
+
+**Never hardcode API keys.** Use environment variables or a secrets manager.
+
+```typescript
+// Good
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+// Bad -- do not do this
+const rk = new RefundKit({ apiKey: 'rk_live_aBcD...' });
+```
+
+**Use test keys in development.** Test keys only work against sandbox processor accounts, so no real charges are refunded.
+
+**Rotate keys if compromised.** Revoke the compromised key in the dashboard and create a new one. Existing keys continue working until explicitly revoked.
+
+**Restrict key access.** Only backend services should have access to API keys. Never expose keys in client-side code, browser bundles, or public repositories.
+
+## Error Responses
+
+If authentication fails, the API returns a `401` status with the following error:
+
+```json
+{
+  "error": {
+    "message": "Invalid API key",
+    "code": "invalid_api_key"
+  }
+}
+```
+
+The SDK surfaces this as a `RefundKitError` with `code: 'invalid_api_key'`:
+
+```typescript
+const { data, error } = await rk.refunds.list();
+
+if (error?.code === 'invalid_api_key') {
+  console.error('Check your REFUNDKIT_API_KEY environment variable');
+}
+```
+
+## Environment Detection
+
+The SDK exports a utility to detect the environment from a key:
+
+```typescript
+import { getApiKeyEnvironment } from '@refundkit/sdk';
+
+const env = getApiKeyEnvironment('rk_test_abc123...');
+// Returns: 'test' | 'live' | null
+```
+
+This is useful for adding safeguards to ensure production code never uses test keys, or vice versa.

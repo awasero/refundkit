@@ -1,0 +1,176 @@
+---
+title: "Webhooks"
+description: "Receive real-time notifications about refund events with RefundKit webhooks, including signature verification and retry policies."
+order: 1
+---
+
+# Webhooks
+
+RefundKit sends webhook events to your server when refund statuses change. This lets you react to refund events in real time instead of polling the API.
+
+## Supported Events
+
+| Event | Trigger |
+|-------|---------|
+| `refund.created` | A new refund has been created |
+| `refund.processing` | The refund has been sent to the payment processor |
+| `refund.completed` | The refund was successfully processed |
+| `refund.failed` | The refund failed at the processor level |
+| `refund.cancelled` | The refund was cancelled |
+
+## Webhook Payload
+
+All webhook events share the same envelope format:
+
+```json
+{
+  "id": "evt_abc123def456",
+  "type": "refund.completed",
+  "createdAt": "2026-02-22T10:32:15.000Z",
+  "data": {
+    "id": "ref_abc123def456",
+    "organizationId": "org_xyz789",
+    "externalRefundId": "re_1N4HcTKz9cXRvFYs",
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "currency": "usd",
+    "reason": "product_defective",
+    "status": "completed",
+    "processor": "stripe",
+    "metadata": {
+      "orderId": "order_12345"
+    },
+    "initiatedBy": "api",
+    "createdAt": "2026-02-22T10:30:00.000Z",
+    "updatedAt": "2026-02-22T10:32:15.000Z"
+  }
+}
+```
+
+### Payload Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique event ID for deduplication |
+| `type` | `string` | Event type (e.g., `refund.completed`) |
+| `createdAt` | `string` | ISO 8601 timestamp of when the event was generated |
+| `data` | `Refund` | The full refund object at the time of the event |
+
+## Configuring Webhooks
+
+### Via the Dashboard
+
+1. Navigate to **Settings** > **Webhooks** in the [RefundKit Dashboard](https://app.refundkit.dev).
+2. Click **Add Endpoint**.
+3. Enter your endpoint URL (must be HTTPS in production).
+4. Select the events you want to receive.
+5. Copy the signing secret for signature verification.
+
+## Signature Verification
+
+Every webhook request includes a `RefundKit-Signature` header containing an HMAC-SHA256 signature. Always verify this signature to ensure the request is authentic.
+
+### Header Format
+
+```
+RefundKit-Signature: t=1708617135,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
+```
+
+The header contains a timestamp (`t`) and signature (`v1`), separated by a comma.
+
+### Verification in Node.js
+
+```typescript
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verifyWebhookSignature(
+  payload: string,
+  signature: string,
+  secret: string,
+  toleranceSeconds = 300,
+): boolean {
+  const parts = Object.fromEntries(
+    signature.split(',').map((part) => {
+      const [key, value] = part.split('=');
+      return [key, value];
+    }),
+  );
+
+  const timestamp = parseInt(parts.t, 10);
+  const now = Math.floor(Date.now() / 1000);
+
+  // Reject if timestamp is too old (replay protection)
+  if (Math.abs(now - timestamp) > toleranceSeconds) {
+    return false;
+  }
+
+  // Compute expected signature
+  const signedPayload = `${timestamp}.${payload}`;
+  const expected = createHmac('sha256', secret)
+    .update(signedPayload)
+    .digest('hex');
+
+  // Timing-safe comparison
+  return timingSafeEqual(
+    Buffer.from(parts.v1),
+    Buffer.from(expected),
+  );
+}
+```
+
+### Express Example
+
+```typescript
+import express from 'express';
+
+const app = express();
+
+app.post(
+  '/webhooks/refundkit',
+  express.raw({ type: 'application/json' }),
+  (req, res) => {
+    const payload = req.body.toString();
+    const signature = req.headers['refundkit-signature'] as string;
+
+    if (!verifyWebhookSignature(payload, signature, process.env.WEBHOOK_SECRET!)) {
+      return res.status(401).send('Invalid signature');
+    }
+
+    const event = JSON.parse(payload);
+
+    switch (event.type) {
+      case 'refund.completed':
+        console.log(`Refund ${event.data.id} completed for $${event.data.amount / 100}`);
+        // Update your database, notify customer, etc.
+        break;
+      case 'refund.failed':
+        console.log(`Refund ${event.data.id} failed: investigate`);
+        break;
+    }
+
+    res.status(200).send('OK');
+  },
+);
+```
+
+## Retry Policy
+
+If your endpoint does not return a `2xx` status code, RefundKit retries the webhook delivery with exponential backoff:
+
+| Attempt | Delay |
+|---------|-------|
+| 1st retry | 1 minute |
+| 2nd retry | 5 minutes |
+| 3rd retry | 30 minutes |
+| 4th retry | 2 hours |
+| 5th retry | 24 hours |
+
+After 5 failed retries, the event is marked as failed. You can view failed deliveries and manually retry them from the dashboard.
+
+## Best Practices
+
+- **Always verify signatures** to prevent forged webhook requests.
+- **Return 200 quickly** and process events asynchronously. If your handler takes too long, the request may time out and trigger a retry.
+- **Use the event `id` for deduplication**. Retries send the same event ID, so check whether you have already processed it.
+- **Use HTTPS endpoints** in production for security.
+- **Handle events idempotently**. Your handler should produce the same result whether called once or multiple times with the same event.

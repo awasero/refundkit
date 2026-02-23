@@ -1,0 +1,154 @@
+---
+title: "Error Codes Reference"
+description: "Complete reference of all RefundKit API error codes with HTTP status codes, descriptions, and resolution steps."
+order: 2
+---
+
+# Error Codes Reference
+
+All RefundKit API errors follow a consistent format with a machine-readable `code` and a human-readable `message`. This page documents every error code the API can return.
+
+## Error Response Format
+
+```json
+{
+  "error": {
+    "message": "Human-readable description of what went wrong",
+    "code": "machine_readable_error_code"
+  }
+}
+```
+
+In the SDK, errors are returned as `RefundKitError` instances in the `error` field of the API response:
+
+```typescript
+import { ErrorCode } from '@refundkit/sdk';
+
+const { data, error } = await rk.refunds.get('ref_xxx');
+
+if (error) {
+  console.log(error.message);    // "Refund not found"
+  console.log(error.code);       // "not_found"
+  console.log(error.statusCode); // 404
+}
+```
+
+## Error Codes Table
+
+| Code | HTTP Status | Description | Resolution |
+|------|-------------|-------------|------------|
+| `invalid_api_key` | 401 | The API key is malformed, expired, or does not exist. | Check that your API key starts with `rk_test_` or `rk_live_` and has not been revoked in the dashboard. |
+| `unauthorized` | 401 | The API key is valid but does not have permission for this operation. | Verify the key has the required permissions for the resource you are accessing. |
+| `not_found` | 404 | The requested resource does not exist. | Check the refund ID or resource identifier. It may have been deleted or may belong to a different organization. |
+| `validation_error` | 400 | The request body failed input validation. | Check the `message` field for details. Common causes: missing required fields, invalid types, amounts less than or equal to 0, empty strings. |
+| `refund_already_processed` | 409 | A refund has already been processed for this transaction. | Check existing refunds for this transaction with `refunds.list()`. Duplicate refunds are not allowed by default. |
+| `refund_not_cancellable` | 409 | The refund is in a terminal state and cannot be cancelled. | Only refunds in `pending` or `processing` status can be cancelled. Completed, failed, and already-cancelled refunds cannot be modified. |
+| `processor_error` | 502 | The payment processor returned an error. | The `message` field contains the processor's error. Common causes: invalid charge ID, charge already refunded, insufficient balance. |
+| `rate_limited` | 429 | Too many requests in a short period. | Back off and retry. Use exponential backoff with jitter. The default rate limit is 100 requests per minute per API key. |
+| `internal_error` | 500 | An unexpected error occurred on the RefundKit server. | Retry the request. If the error persists, contact support with the request details. |
+| `network_error` | _(none)_ | The SDK could not reach the RefundKit API. | Check your internet connection, DNS settings, and firewall rules. This error is only raised client-side by the SDK. |
+| `timeout` | _(none)_ | The request exceeded the configured timeout duration. | Increase the `timeout` option in `RefundKitConfig`, or check for network latency issues. This error is only raised client-side by the SDK. |
+
+## Handling Errors by Category
+
+### Client-Side Errors (No HTTP Status)
+
+These errors occur before any network request is made or when the network fails:
+
+```typescript
+if (error.statusCode === null) {
+  switch (error.code) {
+    case ErrorCode.VALIDATION_ERROR:
+      // Fix the input parameters
+      console.log('Invalid input:', error.message);
+      break;
+    case ErrorCode.NETWORK_ERROR:
+      // Check connectivity
+      console.log('Cannot reach API');
+      break;
+    case ErrorCode.TIMEOUT:
+      // Retry or increase timeout
+      console.log('Request timed out');
+      break;
+  }
+}
+```
+
+### Authentication Errors (401)
+
+```typescript
+if (error.statusCode === 401) {
+  // API key is invalid or lacks permissions
+  // Do not retry -- fix the API key configuration
+  console.error('Authentication failed:', error.code);
+}
+```
+
+### Conflict Errors (409)
+
+```typescript
+if (error.statusCode === 409) {
+  switch (error.code) {
+    case ErrorCode.REFUND_ALREADY_PROCESSED:
+      // Retrieve the existing refund instead
+      break;
+    case ErrorCode.REFUND_NOT_CANCELLABLE:
+      // The refund has already completed or failed
+      break;
+  }
+}
+```
+
+### Server Errors (500, 502)
+
+```typescript
+if (error.statusCode && error.statusCode >= 500) {
+  // Retry with exponential backoff
+  console.log('Server error, retrying...');
+}
+```
+
+## Retry Strategy
+
+A recommended retry strategy for transient errors:
+
+```typescript
+import RefundKit, { ErrorCode } from '@refundkit/sdk';
+import type { ApiResponse, Refund, CreateRefundParams } from '@refundkit/sdk';
+
+const RETRYABLE_CODES = new Set([
+  ErrorCode.RATE_LIMITED,
+  ErrorCode.INTERNAL_ERROR,
+  ErrorCode.NETWORK_ERROR,
+  ErrorCode.TIMEOUT,
+]);
+
+async function createRefundWithRetry(
+  rk: RefundKit,
+  params: CreateRefundParams,
+  maxRetries = 3,
+): Promise<ApiResponse<Refund>> {
+  let lastResult: ApiResponse<Refund>;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    lastResult = await rk.refunds.create(params);
+
+    if (!lastResult.error || !RETRYABLE_CODES.has(lastResult.error.code)) {
+      return lastResult;
+    }
+
+    if (attempt < maxRetries) {
+      const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+      const jitter = Math.random() * 1000;
+      await new Promise((r) => setTimeout(r, delay + jitter));
+    }
+  }
+
+  return lastResult!;
+}
+```
+
+## Next Steps
+
+- [Error Handling (SDK)](/docs/sdk/error-handling) -- SDK-specific error handling patterns.
+- [API Reference](/docs/api-reference/refunds-create) -- Full request/response documentation.

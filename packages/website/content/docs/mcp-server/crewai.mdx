@@ -1,0 +1,174 @@
+---
+title: "CrewAI Integration"
+description: "Build multi-agent refund processing crews with CrewAI and the RefundKit MCP server."
+order: 7
+---
+
+# CrewAI Integration
+
+[CrewAI](https://www.crewai.com/) is a multi-agent orchestration framework that lets you build teams of AI agents working together. This guide shows how to integrate RefundKit MCP tools into CrewAI agents for collaborative refund processing.
+
+## Prerequisites
+
+- Python 3.10+
+- Node.js 18+ (for the MCP server)
+- A RefundKit API key
+
+## Installation
+
+```bash
+pip install crewai crewai-tools
+npm install @refundkit/sdk
+```
+
+## Basic Setup
+
+CrewAI supports MCP tools natively. Configure a crew with access to RefundKit:
+
+```python
+import os
+from crewai import Agent, Task, Crew, Process
+from crewai_tools import MCPServerAdapter
+
+# Configure the RefundKit MCP server
+refundkit_mcp = MCPServerAdapter(
+    server_params={
+        "command": "npx",
+        "args": ["@refundkit/sdk"],
+        "env": {
+            "REFUNDKIT_API_KEY": os.environ["REFUNDKIT_API_KEY"],
+        },
+    }
+)
+
+# Load tools from the MCP server
+refundkit_tools = refundkit_mcp.tools()
+
+# Create an agent with RefundKit tools
+refund_agent = Agent(
+    role="Refund Specialist",
+    goal="Process customer refunds accurately and efficiently",
+    backstory="""You are an experienced refund specialist. You always
+    check the refund policy before processing and provide clear
+    communication about the refund status and timeline.""",
+    tools=refundkit_tools,
+    verbose=True,
+)
+
+# Define a refund task
+refund_task = Task(
+    description="""Process a refund for transaction {transaction_id}.
+    Amount: {amount} cents. Reason: {reason}.
+    First check the policy, then process if eligible.""",
+    expected_output="Refund confirmation with ID and status, or explanation of why the refund was denied.",
+    agent=refund_agent,
+)
+
+# Create and run the crew
+crew = Crew(
+    agents=[refund_agent],
+    tasks=[refund_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff(
+    inputs={
+        "transaction_id": "ch_1N4HbSKz9cXRvFYr",
+        "amount": "2500",
+        "reason": "product_defective",
+    }
+)
+
+print(result)
+```
+
+## Multi-Agent Crew
+
+CrewAI excels at multi-agent workflows. Here is a crew with specialized roles for refund processing:
+
+```python
+# Policy analyst checks eligibility
+policy_analyst = Agent(
+    role="Policy Analyst",
+    goal="Verify refund eligibility against company policies",
+    backstory="""You are a policy analyst who checks whether refunds
+    are eligible. You use the refundkit_get_policy tool to verify
+    eligibility and report conditions and deadlines.""",
+    tools=refundkit_tools,
+)
+
+# Refund processor handles execution
+refund_processor = Agent(
+    role="Refund Processor",
+    goal="Execute approved refunds and track their status",
+    backstory="""You process refunds that have been approved by the
+    policy team. You use refundkit_process_refund to execute and
+    refundkit_check_refund_status to verify completion.""",
+    tools=refundkit_tools,
+)
+
+# Quality reviewer audits the results
+quality_reviewer = Agent(
+    role="Quality Reviewer",
+    goal="Audit refund processing for accuracy and compliance",
+    backstory="""You review completed refund operations to ensure
+    they were processed correctly. You check amounts, reasons,
+    and final statuses using refundkit_check_refund_status.""",
+    tools=refundkit_tools,
+)
+
+# Define tasks for each agent
+check_policy_task = Task(
+    description="Check refund eligibility for transaction {transaction_id} with amount {amount} cents.",
+    expected_output="Eligibility determination with policy details.",
+    agent=policy_analyst,
+)
+
+process_refund_task = Task(
+    description="If the policy check approved the refund, process it for transaction {transaction_id}, amount {amount} cents, reason: {reason}.",
+    expected_output="Refund ID and processing status.",
+    agent=refund_processor,
+    context=[check_policy_task],
+)
+
+review_task = Task(
+    description="Verify the processed refund was executed correctly. Check the refund status and confirm all details.",
+    expected_output="Audit confirmation with refund details.",
+    agent=quality_reviewer,
+    context=[process_refund_task],
+)
+
+# Assemble and run the crew
+crew = Crew(
+    agents=[policy_analyst, refund_processor, quality_reviewer],
+    tasks=[check_policy_task, process_refund_task, review_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff(
+    inputs={
+        "transaction_id": "ch_1N4HbSKz9cXRvFYr",
+        "amount": "2500",
+        "reason": "product_defective",
+    }
+)
+```
+
+## Restricting Tool Access
+
+Give different agents access to different tools for security:
+
+```python
+# Only give the policy analyst the policy tool
+policy_tools = [t for t in refundkit_tools if "policy" in t.name]
+
+# Only give the processor the process and cancel tools
+processor_tools = [t for t in refundkit_tools if "process" in t.name or "cancel" in t.name]
+```
+
+## Next Steps
+
+- [MCP Tools Reference](/docs/mcp-server/tools) -- Full documentation for all five tools.
+- [Webhooks](/docs/webhooks) -- Get notified about refund status changes.

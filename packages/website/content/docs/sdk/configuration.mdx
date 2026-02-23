@@ -1,0 +1,147 @@
+---
+title: "Configuration"
+description: "Configure the RefundKit SDK constructor options including API key, base URL, and request timeout."
+order: 2
+---
+
+# Configuration
+
+The `RefundKit` constructor accepts a configuration object with options for authentication, API endpoint, and request behavior.
+
+## Constructor Options
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({
+  apiKey: 'rk_test_your_key_here',   // Required
+  baseUrl: 'https://api.refundkit.dev', // Optional
+  timeout: 30000,                       // Optional (ms)
+});
+```
+
+### `RefundKitConfig` Interface
+
+```typescript
+interface RefundKitConfig {
+  apiKey: string;
+  baseUrl?: string;
+  timeout?: number;
+}
+```
+
+## Options Reference
+
+### `apiKey` (required)
+
+Your RefundKit API key. Must start with `rk_live_` or `rk_test_`.
+
+```typescript
+const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY!,
+});
+```
+
+If you pass an empty string or `undefined`, the constructor throws immediately:
+
+```
+Error: API key is required. Get yours at https://app.refundkit.dev/api-keys
+```
+
+### `baseUrl` (optional)
+
+The base URL for the RefundKit API.
+
+| Value | Description |
+|-------|-------------|
+| `https://api.refundkit.dev` | Production API (default) |
+| `http://localhost:3000` | Local development server |
+| Custom URL | Self-hosted or proxy endpoint |
+
+```typescript
+// Use local development server
+const rk = new RefundKit({
+  apiKey: 'rk_test_xxx',
+  baseUrl: 'http://localhost:3000',
+});
+```
+
+This is useful for local development, testing against a mock server, or routing through a proxy.
+
+### `timeout` (optional)
+
+Request timeout in milliseconds. If a request exceeds this duration, it is aborted and a `RefundKitError` with code `timeout` is thrown.
+
+| Value | Description |
+|-------|-------------|
+| `30000` | 30 seconds (default) |
+| `10000` | 10 seconds (aggressive, for fast networks) |
+| `60000` | 60 seconds (for slow connections) |
+
+```typescript
+// Set a 10-second timeout
+const rk = new RefundKit({
+  apiKey: 'rk_test_xxx',
+  timeout: 10_000,
+});
+```
+
+## Environment-Based Configuration
+
+A common pattern is to use different configurations for development and production:
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const isDev = process.env.NODE_ENV === 'development';
+
+const rk = new RefundKit({
+  apiKey: isDev
+    ? process.env.REFUNDKIT_TEST_KEY!
+    : process.env.REFUNDKIT_LIVE_KEY!,
+  baseUrl: isDev
+    ? 'http://localhost:3000'
+    : undefined, // uses default production URL
+  timeout: isDev ? 10_000 : 30_000,
+});
+```
+
+## Singleton Pattern
+
+For applications that use a single RefundKit instance, export it from a shared module:
+
+```typescript
+// lib/refundkit.ts
+import RefundKit from '@refundkit/sdk';
+
+export const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY!,
+});
+```
+
+Then import it wherever you need to process refunds:
+
+```typescript
+// routes/refunds.ts
+import { rk } from '../lib/refundkit.js';
+
+const { data, error } = await rk.refunds.create({
+  transactionId: 'ch_xxx',
+  amount: 1000,
+  reason: 'duplicate_charge',
+});
+```
+
+## Internal Behavior
+
+The configuration is passed to an internal `HttpClient` instance that handles all HTTP communication. The client:
+
+1. Sets the `Authorization: Bearer <apiKey>` header on every request.
+2. Sets `Content-Type: application/json` and `User-Agent: @refundkit/sdk`.
+3. Uses the native `fetch` API with an `AbortController` for timeout management.
+4. Parses all responses as `{ data, error }` and wraps failures in `RefundKitError`.
+
+## Next Steps
+
+- [Refunds](/docs/sdk/refunds) -- Create, get, list, and cancel refunds.
+- [Error Handling](/docs/sdk/error-handling) -- Handle errors from the SDK.

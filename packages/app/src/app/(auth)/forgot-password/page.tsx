@@ -1,0 +1,63 @@
+'use client';
+
+import Link from 'next/link';
+import { useState } from 'react';
+
+export default function ForgotPasswordPage() {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="w-full max-w-sm">
+        <div className="text-center">
+          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-accent">
+            <span className="text-sm font-bold text-black">RK</span>
+          </div>
+          <h1 className="mt-4 text-2xl font-semibold text-text-primary">Reset password</h1>
+          <p className="mt-1 text-sm text-text-secondary">
+            We&apos;ll send you a link to reset your password
+          </p>
+        </div>
+
+        {sent ? (
+          <div className="mt-8 rounded-xl border border-accent/20 bg-accent/5 p-4 text-center">
+            <p className="text-sm text-text-primary">Check your email for a reset link.</p>
+          </div>
+        ) : (
+          <form
+            className="mt-8 space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setSent(true);
+            }}
+          >
+            <div>
+              <label className="text-xs text-text-secondary">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="mt-1 w-full rounded-lg border border-white/5 bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-lg bg-accent py-2 text-sm font-medium text-black hover:bg-accent-hover"
+            >
+              Send reset link
+            </button>
+          </form>
+        )}
+
+        <p className="mt-6 text-center text-sm text-text-secondary">
+          <Link href="/login" className="text-accent hover:underline">
+            Back to sign in
+          </Link>
+        </p>
+      </div>
+    </div>
+  );
+}

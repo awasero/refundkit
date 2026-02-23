@@ -1,0 +1,378 @@
+---
+title: "Building a Refund Flow for Multi-Processor Commerce"
+description: "How to design a unified refund interface that works across Stripe, PayPal, and other payment processors without leaking abstractions."
+date: "2024-01-22T10:00:00.000Z"
+author: "RefundKit Team"
+tags: ["architecture", "payments", "stripe"]
+slug: "building-refund-flow-multi-processor-commerce"
+---
+
+## Introduction
+
+If you have ever worked on a payments team, you know that the number of payment processors a company uses tends to grow over time. You start with Stripe because it is the fastest way to accept credit cards. Then you add PayPal because international customers prefer it. Then a buy-now-pay-later provider because your conversion team ran an A/B test. Then a local payment method for a new market you are entering.
+
+Each of these processors has its own API for issuing refunds. They use different authentication schemes, different request formats, different status models, and different error codes. The charge that Stripe calls a `charge` is a `capture` in PayPal and a `payment` in Square. A refund that Stripe marks as `succeeded` might be `COMPLETED` in PayPal's world.
+
+When a customer asks for a refund, your system needs to figure out which processor handled the original payment, translate the refund request into that processor's format, issue the refund, normalize the response back into your internal model, and handle any errors along the way. Multiply this by every processor you support, and you have a significant engineering surface.
+
+This post explores how to build a refund flow that abstracts away these differences, creating a unified interface that the rest of your application -- whether it is a customer support dashboard, an API, or an AI agent -- can use without knowing or caring which processor is involved.
+
+## The Multi-Processor Problem
+
+Let us start by examining what makes multi-processor refunds difficult. It is not just about calling different APIs. The fundamental challenge is that each processor has a different mental model of what a refund is and how it works.
+
+### Status Model Divergence
+
+Stripe refunds have these statuses: `pending`, `succeeded`, `failed`, `canceled`. PayPal refunds can be `PENDING`, `COMPLETED`, `PARTIALLY_REFUNDED`, `CANCELLED`. Adyen uses `Authorised`, `SentForRefund`, `Refunded`, `RefundFailed`. Square uses `PENDING`, `APPROVED`, `REJECTED`, `FAILED`.
+
+If your application code checks `if (refund.status === 'succeeded')`, you have already coupled yourself to Stripe's vocabulary. When you add a second processor, you need to either normalize the statuses at the boundary or sprinkle processor-specific checks throughout your codebase. The first approach is obviously better, but it requires thoughtful design.
+
+### Error Semantics
+
+When a refund fails, the reason matters. Stripe might return a `charge_already_refunded` error. PayPal might return `TRANSACTION_REFUSED`. Square might give you `REFUND_AMOUNT_INVALID`. Your application needs to map these into a consistent error model so that the calling code can take appropriate action without processor-specific branching.
+
+### Timing and Lifecycle
+
+Some processors process refunds synchronously -- you get a success response, and the money is on its way back. Others are asynchronous -- you get an acknowledgment, and the actual refund happens later. Some processors support cancelling a pending refund; others do not. Some support partial refunds on the same transaction; others require you to handle the math yourself.
+
+### Idempotency Models
+
+Stripe uses idempotency keys that you pass as headers. PayPal uses the `PayPal-Request-Id` header. Others require you to implement idempotency yourself by tracking which refund requests you have already submitted. If you do not handle this correctly, a network timeout and retry could result in a double refund -- one of the most expensive bugs in payments.
+
+## The Processor Abstraction Pattern
+
+The solution is a processor abstraction: an interface that defines what it means to process a refund, regardless of the underlying provider. This is a classic application of the Strategy pattern, and it works exceptionally well for payment processing.
+
+Here is what a clean processor interface looks like:
+
+```typescript
+interface PaymentProcessor {
+  name: string;
+  processRefund(params: RefundParams): Promise<ProcessorRefundResult>;
+  getRefundStatus(externalId: string): Promise<ProcessorStatus>;
+  cancelRefund(externalId: string): Promise<ProcessorCancelResult>;
+  validateTransaction(transactionId: string): Promise<TransactionInfo>;
+}
+
+interface RefundParams {
+  transactionId: string;
+  amount: number;
+  currency: string;
+  reason: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface ProcessorRefundResult {
+  externalRefundId: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  processedAt: string;
+}
+```
+
+Notice several design decisions here:
+
+**Normalized status values.** The interface defines a small, fixed set of statuses (`pending`, `processing`, `completed`, `failed`) that every processor implementation maps into. The rest of the application only ever sees these four statuses.
+
+**String-based transaction IDs.** Every processor uses strings to identify transactions and refunds, but the format varies wildly (`ch_xxx` for Stripe, alphanumeric UUIDs for PayPal, etc.). The interface treats them as opaque strings, leaving the interpretation to each processor implementation.
+
+**Explicit amount and currency.** Rather than relying on processor-specific amount formats (Stripe uses cents, some processors use decimal amounts), the interface standardizes on smallest-currency-unit integers.
+
+## Implementing Processor Adapters
+
+With the interface defined, each processor gets an adapter that translates between the universal interface and the processor-specific API. Here is what a Stripe adapter looks like:
+
+```typescript
+import Stripe from 'stripe';
+import type { PaymentProcessor, RefundParams, ProcessorRefundResult } from '@refundkit/sdk';
+
+class StripeProcessor implements PaymentProcessor {
+  readonly name = 'stripe';
+  private readonly client: Stripe;
+
+  constructor(secretKey: string) {
+    this.client = new Stripe(secretKey);
+  }
+
+  async processRefund(params: RefundParams): Promise<ProcessorRefundResult> {
+    const refund = await this.client.refunds.create({
+      charge: params.transactionId,
+      amount: params.amount,
+      reason: this.mapReason(params.reason),
+      metadata: params.metadata as Stripe.MetadataParam,
+    });
+
+    return {
+      externalRefundId: refund.id,
+      status: this.mapStatus(refund.status),
+      processedAt: new Date().toISOString(),
+    };
+  }
+
+  async getRefundStatus(externalId: string): Promise<ProcessorStatus> {
+    const refund = await this.client.refunds.retrieve(externalId);
+    return {
+      externalRefundId: refund.id,
+      status: this.mapStatus(refund.status),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async cancelRefund(externalId: string): Promise<ProcessorCancelResult> {
+    const refund = await this.client.refunds.cancel(externalId);
+    return {
+      cancelled: refund.status === 'canceled',
+      cancelledAt: refund.status === 'canceled' ? new Date().toISOString() : null,
+    };
+  }
+
+  async validateTransaction(transactionId: string): Promise<TransactionInfo> {
+    const charge = await this.client.charges.retrieve(transactionId);
+    return {
+      transactionId: charge.id,
+      amount: charge.amount,
+      currency: charge.currency,
+      processor: 'stripe',
+      valid: charge.paid && !charge.refunded,
+    };
+  }
+
+  private mapStatus(status: string | null): ProcessorRefundResult['status'] {
+    switch (status) {
+      case 'succeeded': return 'completed';
+      case 'pending': return 'processing';
+      case 'failed': return 'failed';
+      case 'canceled': return 'failed';
+      default: return 'pending';
+    }
+  }
+
+  private mapReason(reason: string): Stripe.RefundCreateParams.Reason | undefined {
+    const mapping: Record<string, Stripe.RefundCreateParams.Reason> = {
+      duplicate_charge: 'duplicate',
+      product_not_received: 'requested_by_customer',
+      product_defective: 'requested_by_customer',
+      wrong_product: 'requested_by_customer',
+    };
+    return mapping[reason];
+  }
+}
+```
+
+The key insight is that all the Stripe-specific knowledge -- status mapping, reason codes, API format -- lives inside this single class. No other part of the system needs to import the Stripe SDK or understand Stripe's conventions.
+
+When you need to add PayPal support, you write a `PayPalProcessor` that implements the same interface. When you add Square, you write a `SquareProcessor`. The consuming code never changes.
+
+## The Routing Layer
+
+With processor adapters in place, you need a routing layer that determines which processor to use for a given refund. The simplest approach is to store the processor name alongside each transaction when it is created:
+
+```typescript
+class RefundRouter {
+  private processors: Map<string, PaymentProcessor> = new Map();
+
+  register(processor: PaymentProcessor): void {
+    this.processors.set(processor.name, processor);
+  }
+
+  getProcessor(name: string): PaymentProcessor {
+    const processor = this.processors.get(name);
+    if (!processor) {
+      throw new Error(`No processor registered for: ${name}`);
+    }
+    return processor;
+  }
+}
+
+// Usage
+const router = new RefundRouter();
+router.register(new StripeProcessor(process.env.STRIPE_SECRET_KEY));
+router.register(new PayPalProcessor(process.env.PAYPAL_CLIENT_ID, process.env.PAYPAL_SECRET));
+
+// When processing a refund, look up the processor from the transaction
+const transaction = await db.getTransaction(transactionId);
+const processor = router.getProcessor(transaction.processor);
+const result = await processor.processRefund({
+  transactionId: transaction.externalId,
+  amount: refundAmount,
+  currency: transaction.currency,
+  reason: refundReason,
+});
+```
+
+This is a straightforward registry pattern. Each processor registers itself by name, and the router looks up the correct processor when a refund needs to be processed.
+
+## Handling Edge Cases
+
+The happy path is straightforward: receive a refund request, route it to the correct processor, get a success response, update the database. But production systems live in the edge cases, and refund flows have plenty of them.
+
+### Partial Refunds
+
+A customer bought three items but only wants to return one. The original charge was $150, and the refund should be $50. Most processors support partial refunds natively, but you need to track how much has already been refunded on a given transaction to prevent over-refunding:
+
+```typescript
+async function processPartialRefund(
+  transactionId: string,
+  amount: number,
+): Promise<ApiResponse<Refund>> {
+  const transaction = await db.getTransaction(transactionId);
+  const existingRefunds = await db.getRefundsByTransaction(transactionId);
+
+  const totalRefunded = existingRefunds
+    .filter(r => r.status !== 'failed' && r.status !== 'cancelled')
+    .reduce((sum, r) => sum + r.amount, 0);
+
+  if (totalRefunded + amount > transaction.amount) {
+    return {
+      data: null,
+      error: new RefundKitError(
+        `Refund amount exceeds remaining balance. Max: ${transaction.amount - totalRefunded}`,
+        'validation_error',
+      ),
+    };
+  }
+
+  // Proceed with refund
+  const processor = router.getProcessor(transaction.processor);
+  return processor.processRefund({ transactionId, amount, currency: transaction.currency, reason });
+}
+```
+
+### Processor Downtime
+
+Payment processors have outages. When a processor is down, you have two options: fail immediately and tell the customer to try later, or queue the refund and process it when the processor comes back online. The queue approach is better for customer experience but adds complexity:
+
+```typescript
+async function processRefundWithFallback(params: RefundParams): Promise<Refund> {
+  try {
+    const processor = router.getProcessor(params.processor);
+    const result = await processor.processRefund(params);
+    return await db.createRefund({ ...params, status: result.status, externalRefundId: result.externalRefundId });
+  } catch (error) {
+    if (isProcessorDownError(error)) {
+      // Queue for later processing
+      const refund = await db.createRefund({ ...params, status: 'pending' });
+      await queue.enqueue('process_refund', { refundId: refund.id });
+      return refund;
+    }
+    throw error;
+  }
+}
+```
+
+### Currency Mismatches
+
+When operating internationally, you might encounter situations where the refund currency does not match the original charge currency. Some processors handle currency conversion automatically; others reject the request. Your abstraction layer should validate currency compatibility before submitting to the processor.
+
+### Race Conditions
+
+Two agents or two support representatives might try to refund the same transaction simultaneously. Without proper concurrency control, you could end up with a double refund. Use database-level locking or optimistic concurrency control to prevent this:
+
+```typescript
+async function createRefund(params: CreateRefundParams): Promise<ApiResponse<Refund>> {
+  // Use a database transaction with a lock on the transaction row
+  return db.transaction(async (tx) => {
+    const transaction = await tx.getTransactionForUpdate(params.transactionId);
+
+    if (transaction.fullyRefunded) {
+      return failure('Transaction has already been fully refunded', 'refund_already_processed');
+    }
+
+    const result = await processRefund(params);
+    await tx.updateTransaction(params.transactionId, {
+      refundedAmount: transaction.refundedAmount + params.amount,
+      fullyRefunded: transaction.refundedAmount + params.amount >= transaction.amount,
+    });
+
+    return success(result);
+  });
+}
+```
+
+## The Unified API Layer
+
+With the processor abstraction, routing layer, and edge case handling in place, you can expose a clean API that hides all of this complexity. This is the interface that your dashboard, API consumers, and AI agents will use:
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY });
+
+// Create a refund -- processor is resolved automatically
+const { data: refund, error } = await rk.refunds.create({
+  transactionId: 'tx_abc123',
+  amount: 2999,
+  reason: 'product_defective',
+});
+
+// Check status -- works regardless of processor
+const { data: status } = await rk.refunds.get(refund.id);
+
+// List refunds -- filter by processor if needed
+const { data: refunds } = await rk.refunds.list({
+  status: 'processing',
+  processor: 'stripe',
+  limit: 25,
+});
+
+// Cancel a pending refund
+const { data: cancelled } = await rk.refunds.cancel(refund.id);
+```
+
+The consumer of this API does not need to know whether the refund is going through Stripe, PayPal, or any other processor. The unified interface handles routing, status normalization, and error mapping automatically.
+
+## Testing Multi-Processor Refund Flows
+
+Testing is where multi-processor architectures pay off. Because each processor is behind an interface, you can write a mock processor for testing that simulates various scenarios:
+
+```typescript
+class MockProcessor implements PaymentProcessor {
+  readonly name = 'mock';
+  private shouldFail = false;
+  private delay = 0;
+
+  simulateFailure(): void { this.shouldFail = true; }
+  simulateDelay(ms: number): void { this.delay = ms; }
+
+  async processRefund(params: RefundParams): Promise<ProcessorRefundResult> {
+    if (this.delay) await new Promise(r => setTimeout(r, this.delay));
+    if (this.shouldFail) throw new Error('Processor error');
+
+    return {
+      externalRefundId: `mock_${crypto.randomUUID().slice(0, 8)}`,
+      status: 'completed',
+      processedAt: new Date().toISOString(),
+    };
+  }
+
+  // ... other methods
+}
+
+// In tests
+describe('RefundFlow', () => {
+  it('should handle processor failure gracefully', async () => {
+    const mock = new MockProcessor();
+    mock.simulateFailure();
+    router.register(mock);
+
+    const result = await processRefund({ transactionId: 'tx_1', amount: 1000, processor: 'mock' });
+    expect(result.status).toBe('pending'); // Queued for retry
+  });
+});
+```
+
+This gives you fast, deterministic tests that cover failure scenarios without depending on external services.
+
+## Conclusion
+
+Building a refund flow for multi-processor commerce is fundamentally a software architecture problem. The payment processors are external dependencies with incompatible interfaces, and your job is to create a clean abstraction that isolates the rest of your application from those incompatibilities.
+
+The key principles are:
+
+1. **Define a universal processor interface** with normalized status values, error codes, and data formats.
+2. **Implement processor-specific adapters** that translate between the universal interface and each provider's API.
+3. **Build a routing layer** that automatically directs refunds to the correct processor based on the original transaction.
+4. **Handle edge cases explicitly**: partial refunds, processor downtime, currency mismatches, and race conditions.
+5. **Expose a unified API** that consumers can use without processor-specific knowledge.
+6. **Test with mock processors** that simulate failure scenarios deterministically.
+
+RefundKit implements this entire pattern as a managed service, so you do not need to build and maintain the abstraction layer yourself. But whether you build it in-house or use a purpose-built tool, the architectural principles remain the same. Get the abstraction right, and adding a new processor becomes a single adapter class instead of a cross-codebase refactoring effort.

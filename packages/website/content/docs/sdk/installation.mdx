@@ -1,0 +1,128 @@
+---
+title: "Installation"
+description: "Install the @refundkit/sdk package via npm, pnpm, or yarn with full ESM and CommonJS support."
+order: 1
+---
+
+# Installation
+
+The RefundKit SDK is distributed as `@refundkit/sdk` on npm. It supports both ESM and CommonJS and ships with full TypeScript type definitions.
+
+## Package Managers
+
+Install with your preferred package manager:
+
+```bash
+# npm
+npm install @refundkit/sdk
+
+# pnpm
+pnpm add @refundkit/sdk
+
+# yarn
+yarn add @refundkit/sdk
+```
+
+## Module System Support
+
+The SDK ships dual-format builds. Your bundler or runtime will automatically resolve the correct format.
+
+**ESM (import)**:
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+```
+
+**CommonJS (require)**:
+
+```javascript
+const { default: RefundKit } = require('@refundkit/sdk');
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY });
+```
+
+The package.json `exports` map handles resolution:
+
+```json
+{
+  ".": {
+    "types": "./dist/index.d.ts",
+    "import": "./dist/index.js",
+    "require": "./dist/index.cjs"
+  },
+  "./mcp": {
+    "types": "./dist/mcp/index.d.ts",
+    "import": "./dist/mcp/index.js",
+    "require": "./dist/mcp/index.cjs"
+  }
+}
+```
+
+## MCP Server Subpath
+
+The MCP server is available as a separate export path. This allows you to import it without pulling in the full SDK if you only need the server:
+
+```typescript
+import { createMcpServer, startMcpServer } from '@refundkit/sdk/mcp';
+```
+
+## CLI Binary
+
+The package also registers a `refundkit` binary that starts the MCP server. After installing globally or using npx:
+
+```bash
+# Via npx (no global install needed)
+REFUNDKIT_API_KEY=rk_test_xxx npx @refundkit/sdk
+
+# Via global install
+npm install -g @refundkit/sdk
+REFUNDKIT_API_KEY=rk_test_xxx refundkit
+```
+
+## Runtime Requirements
+
+- **Node.js**: 18.0.0 or later (uses native `fetch` and `crypto`)
+- **TypeScript**: 5.0 or later (recommended for full type inference)
+- **Browser**: Not supported. The SDK uses Node.js `crypto` for API key utilities and is intended for server-side use.
+
+## Dependencies
+
+The SDK has three runtime dependencies:
+
+| Package | Purpose |
+|---------|---------|
+| `zod` | Input validation for all SDK methods |
+| `stripe` | Stripe payment processor integration |
+| `@modelcontextprotocol/sdk` | MCP server implementation |
+
+These are managed automatically by your package manager.
+
+## Verifying Installation
+
+After installation, verify the SDK is working:
+
+```typescript
+import RefundKit, { getApiKeyEnvironment } from '@refundkit/sdk';
+
+// Check key format
+const env = getApiKeyEnvironment(process.env.REFUNDKIT_API_KEY!);
+console.log('Environment:', env); // 'test' or 'live'
+
+// Initialize client
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+// List refunds (should return empty array for new accounts)
+const { data, error } = await rk.refunds.list();
+if (error) {
+  console.error('Connection failed:', error.message);
+} else {
+  console.log('Connected! Found', data.length, 'refunds.');
+}
+```
+
+## Next Steps
+
+- [Configuration](/docs/sdk/configuration) -- Configure base URL, timeouts, and other options.
+- [Refunds](/docs/sdk/refunds) -- Start creating and managing refunds.

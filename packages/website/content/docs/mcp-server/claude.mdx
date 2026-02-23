@@ -1,0 +1,112 @@
+---
+title: "Claude Desktop Integration"
+description: "Connect the RefundKit MCP server to Claude Desktop so Claude can process refunds during conversations."
+order: 4
+---
+
+# Claude Desktop Integration
+
+Claude Desktop supports MCP servers natively. Once configured, Claude can discover RefundKit's tools and use them to process refunds, check statuses, and enforce policies during conversations.
+
+## Prerequisites
+
+- [Claude Desktop](https://claude.ai/download) installed
+- A RefundKit API key ([get one at app.refundkit.dev](https://app.refundkit.dev))
+- Node.js 18+ installed (for npx)
+
+## Configuration
+
+Claude Desktop reads MCP server configurations from a JSON file. Open or create the config file:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add the RefundKit MCP server to the `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "npx",
+      "args": ["@refundkit/sdk"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+After saving the file, restart Claude Desktop. You should see the RefundKit tools appear in Claude's tool list (indicated by the hammer icon).
+
+## Using a Specific Node Path
+
+If npx is not on Claude Desktop's PATH, specify the full path to node:
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "/usr/local/bin/npx",
+      "args": ["@refundkit/sdk"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+## Using a Local Installation
+
+If you have the SDK installed locally in a project:
+
+```json
+{
+  "mcpServers": {
+    "refundkit": {
+      "command": "node",
+      "args": ["/path/to/your/project/node_modules/@refundkit/sdk/dist/mcp/index.js"],
+      "env": {
+        "REFUNDKIT_API_KEY": "rk_test_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+## Verifying the Connection
+
+After restarting Claude Desktop, start a new conversation and ask:
+
+> "What RefundKit tools do you have available?"
+
+Claude should respond with a list of the five available tools: `refundkit_process_refund`, `refundkit_check_refund_status`, `refundkit_list_refunds`, `refundkit_get_policy`, and `refundkit_cancel_refund`.
+
+## Example Conversation
+
+Once configured, Claude can handle refund requests naturally:
+
+**You**: A customer wants a refund for transaction ch_1N4HbSKz9cXRvFYr. The product was defective. The charge was $25.
+
+**Claude**: Let me check the refund policy for this transaction first.
+
+*Claude calls `refundkit_get_policy` with `transactionId: "ch_1N4HbSKz9cXRvFYr"`*
+
+The transaction is eligible for a refund. Let me process that now.
+
+*Claude calls `refundkit_process_refund` with the transaction details*
+
+The refund has been processed successfully. Here are the details:
+- Refund ID: ref_abc123
+- Amount: $25.00
+- Status: Processing
+- It should appear on the customer's statement within 5-10 business days.
+
+## Troubleshooting
+
+**Tools not appearing**: Ensure the config file is valid JSON and the path to npx is correct. Check Claude Desktop's developer logs for errors.
+
+**Authentication errors**: Verify your API key is correct and has the right prefix (`rk_test_` for sandbox, `rk_live_` for production).
+
+**Server not starting**: Run `npx @refundkit/sdk` manually in your terminal with the `REFUNDKIT_API_KEY` environment variable to check for errors.

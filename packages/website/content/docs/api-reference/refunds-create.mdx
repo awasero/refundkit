@@ -1,0 +1,153 @@
+---
+title: "Create Refund"
+description: "POST /v1/refunds — Create a new refund against a payment processor transaction."
+order: 1
+---
+
+# Create Refund
+
+```
+POST /v1/refunds
+```
+
+Creates a new refund for a payment processor transaction. The refund is validated, routed to the configured payment processor, and tracked in RefundKit.
+
+## Authentication
+
+Requires a Bearer token in the `Authorization` header.
+
+```
+Authorization: Bearer rk_live_your_api_key_here
+```
+
+## Request Body
+
+```json
+{
+  "transactionId": "ch_1N4HbSKz9cXRvFYr",
+  "amount": 2500,
+  "reason": "product_defective",
+  "currency": "usd",
+  "processor": "stripe",
+  "metadata": {
+    "orderId": "order_12345",
+    "customerId": "cust_67890"
+  }
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transactionId` | `string` | Yes | The original charge or payment ID from the processor. Must not be empty. |
+| `amount` | `number` | Yes | Refund amount in smallest currency unit (e.g., cents). Must be positive. |
+| `reason` | `string` | Yes | One of: `product_not_received`, `product_defective`, `wrong_product`, `duplicate_charge`, `subscription_cancelled`, `other` |
+| `currency` | `string` | No | Three-letter ISO 4217 currency code. Default: `usd`. Must be exactly 3 characters. |
+| `processor` | `string` | No | Payment processor name (e.g., `stripe`). Auto-detected from the transaction if not specified. |
+| `metadata` | `object` | No | Arbitrary key-value pairs to attach to the refund. |
+
+## Response
+
+### Success (200)
+
+```json
+{
+  "data": {
+    "id": "ref_abc123def456",
+    "organizationId": "org_xyz789",
+    "externalRefundId": "re_1N4HcTKz9cXRvFYs",
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "currency": "usd",
+    "reason": "product_defective",
+    "status": "processing",
+    "processor": "stripe",
+    "metadata": {
+      "orderId": "order_12345",
+      "customerId": "cust_67890"
+    },
+    "initiatedBy": "api",
+    "createdAt": "2026-02-22T10:30:00.000Z",
+    "updatedAt": "2026-02-22T10:30:00.000Z"
+  }
+}
+```
+
+### Validation Error (400)
+
+```json
+{
+  "error": {
+    "message": "Amount must be positive",
+    "code": "validation_error"
+  }
+}
+```
+
+### Unauthorized (401)
+
+```json
+{
+  "error": {
+    "message": "Invalid API key",
+    "code": "invalid_api_key"
+  }
+}
+```
+
+### Conflict (409)
+
+```json
+{
+  "error": {
+    "message": "A refund has already been processed for this transaction",
+    "code": "refund_already_processed"
+  }
+}
+```
+
+### Processor Error (502)
+
+```json
+{
+  "error": {
+    "message": "Stripe: This charge has already been refunded",
+    "code": "processor_error"
+  }
+}
+```
+
+## SDK Example
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.refunds.create({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,
+  reason: 'product_defective',
+});
+
+if (error) {
+  console.error(`[${error.code}] ${error.message}`);
+} else {
+  console.log('Refund created:', data.id);
+}
+```
+
+## cURL Example
+
+```bash
+curl -X POST https://api.refundkit.dev/v1/refunds \
+  -H "Authorization: Bearer rk_live_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "reason": "product_defective",
+    "currency": "usd"
+  }'
+```

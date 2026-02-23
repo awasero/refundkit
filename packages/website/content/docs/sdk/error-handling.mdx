@@ -1,0 +1,129 @@
+---
+title: "Error Handling"
+description: "Handle errors from the RefundKit SDK using the { data, error } response pattern and RefundKitError objects."
+order: 15
+---
+
+# Error Handling
+
+Every SDK method returns a `{ data, error }` tuple instead of throwing exceptions. This design makes error handling explicit and predictable across your codebase.
+
+## The Response Pattern
+
+Exactly one of `data` or `error` will be non-null in every response:
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.refunds.create({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,
+  reason: 'customer_request',
+});
+
+if (error) {
+  // Handle the error -- data is null
+  console.error(error.message);
+  return;
+}
+
+// Use the data -- error is null
+console.log(data.id);
+```
+
+## RefundKitError Object
+
+When an error occurs, the `error` field contains a `RefundKitError` with the following properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `message` | `string` | Human-readable error description |
+| `code` | `string` | Machine-readable error code for programmatic handling |
+| `statusCode` | `number` | HTTP status code from the API response |
+
+```typescript
+if (error) {
+  console.error('Message:', error.message);     // "Invalid API key"
+  console.error('Code:', error.code);           // "invalid_api_key"
+  console.error('Status:', error.statusCode);   // 401
+}
+```
+
+## Common Error Codes
+
+| Code | Status | Description |
+|------|--------|-------------|
+| `invalid_api_key` | 401 | The API key is missing, malformed, or revoked |
+| `not_found` | 404 | The requested refund or transaction does not exist |
+| `validation_error` | 400 | The request body failed validation (missing or invalid fields) |
+| `refund_already_processed` | 409 | The refund has already been completed or cancelled |
+| `policy_violation` | 403 | The refund violates a configured policy rule |
+| `processor_error` | 502 | The payment processor returned an error |
+| `timeout` | 408 | The request exceeded the configured timeout |
+| `rate_limit_exceeded` | 429 | Too many requests; back off and retry |
+
+## Handling Specific Errors
+
+Use the `code` property to handle errors programmatically:
+
+```typescript
+const { data, error } = await rk.refunds.cancel('ref_xyz789');
+
+if (error) {
+  switch (error.code) {
+    case 'not_found':
+      console.error('Refund does not exist');
+      break;
+    case 'refund_already_processed':
+      console.error('Cannot cancel a completed refund');
+      break;
+    case 'rate_limit_exceeded':
+      console.error('Too many requests, retrying...');
+      // implement retry logic
+      break;
+    default:
+      console.error('Unexpected error:', error.message);
+  }
+}
+```
+
+## Validation Errors
+
+When the SDK validates input before sending a request (using Zod), it returns a `validation_error` code with a descriptive message indicating which field failed:
+
+```typescript
+const { error } = await rk.refunds.create({
+  transactionId: '',  // empty string
+  amount: -100,       // negative amount
+  reason: 'test',
+});
+
+if (error?.code === 'validation_error') {
+  console.error(error.message);
+  // "transactionId must be a non-empty string"
+}
+```
+
+## Network and Timeout Errors
+
+If the API is unreachable or the request exceeds the configured timeout, the SDK wraps the underlying error:
+
+```typescript
+const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY!,
+  timeout: 5000, // 5 seconds
+});
+
+const { error } = await rk.refunds.list();
+
+if (error?.code === 'timeout') {
+  console.error('Request timed out after 5 seconds');
+}
+```
+
+## Next Steps
+
+- [TypeScript](/docs/sdk/typescript) -- TypeScript types and inference for SDK responses.
+- [Errors Reference](/docs/errors) -- Full list of error codes and HTTP status mappings.

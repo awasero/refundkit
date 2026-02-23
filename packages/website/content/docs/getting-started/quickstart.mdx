@@ -1,0 +1,145 @@
+---
+title: "Quickstart"
+description: "Get up and running with RefundKit in under 5 minutes. Install the SDK, configure your API key, and process your first refund."
+order: 2
+---
+
+# Quickstart
+
+This guide walks you through installing the RefundKit SDK, authenticating, and processing your first refund. You will be up and running in under 5 minutes.
+
+## Prerequisites
+
+- Node.js 18 or later
+- A RefundKit account with an API key ([sign up at app.refundkit.dev](https://app.refundkit.dev))
+- A connected payment processor (e.g., Stripe)
+
+## Step 1: Install the SDK
+
+```bash
+# npm
+npm install @refundkit/sdk
+
+# pnpm
+pnpm add @refundkit/sdk
+
+# yarn
+yarn add @refundkit/sdk
+```
+
+## Step 2: Initialize the Client
+
+Create a RefundKit instance with your API key. Use a test key (`rk_test_`) during development and a live key (`rk_live_`) in production.
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY!,
+});
+```
+
+## Step 3: Check Refund Eligibility
+
+Before processing a refund, check whether the transaction is eligible under your configured policies.
+
+```typescript
+const { data: policy, error } = await rk.policies.check({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,
+});
+
+if (error) {
+  console.error('Policy check failed:', error.message);
+  process.exit(1);
+}
+
+if (!policy.eligible) {
+  console.log('Refund not eligible:', policy.reason);
+  process.exit(1);
+}
+
+console.log('Eligible for refund up to', policy.maxAmount, 'cents');
+```
+
+## Step 4: Process a Refund
+
+Create a refund against the transaction. Amounts are in the smallest currency unit (cents for USD).
+
+```typescript
+const { data: refund, error: refundError } = await rk.refunds.create({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,       // $25.00 in cents
+  reason: 'product_defective',
+});
+
+if (refundError) {
+  console.error('Refund failed:', refundError.message);
+  console.error('Error code:', refundError.code);
+  process.exit(1);
+}
+
+console.log('Refund created:', refund.id);
+console.log('Status:', refund.status);
+```
+
+## Step 5: Check Refund Status
+
+Refunds may take time to process. You can check the status at any point.
+
+```typescript
+const { data: status } = await rk.refunds.get(refund.id);
+
+console.log('Current status:', status?.status);
+// 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+```
+
+## Full Example
+
+Here is the complete flow in a single file:
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({
+  apiKey: process.env.REFUNDKIT_API_KEY!,
+});
+
+async function processRefund(transactionId: string, amount: number) {
+  // Check policy first
+  const { data: policy, error: policyError } = await rk.policies.check({
+    transactionId,
+    amount,
+  });
+
+  if (policyError) {
+    return { success: false, error: policyError.message };
+  }
+
+  if (!policy.eligible) {
+    return { success: false, error: `Not eligible: ${policy.reason}` };
+  }
+
+  // Process the refund
+  const { data: refund, error: refundError } = await rk.refunds.create({
+    transactionId,
+    amount,
+    reason: 'product_defective',
+  });
+
+  if (refundError) {
+    return { success: false, error: refundError.message };
+  }
+
+  return { success: true, refundId: refund.id, status: refund.status };
+}
+
+const result = await processRefund('ch_1N4HbSKz9cXRvFYr', 2500);
+console.log(result);
+```
+
+## Next Steps
+
+- [Authentication](/docs/getting-started/authentication) -- Understand API key types and security.
+- [SDK Reference](/docs/sdk/refunds) -- Full refund CRUD operations.
+- [MCP Server](/docs/mcp-server) -- Let AI agents process refunds.

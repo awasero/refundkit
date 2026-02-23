@@ -1,0 +1,122 @@
+---
+title: "Stripe Integration"
+description: "Connect Stripe to RefundKit for automated refund processing with charge validation and status tracking."
+order: 1
+---
+
+# Stripe Integration
+
+RefundKit integrates with Stripe as a first-class payment processor. Once connected, RefundKit can process refunds against Stripe charges, validate transactions, track refund status, and handle cancellations.
+
+## How It Works
+
+When you create a refund through RefundKit (via SDK, API, or MCP), the request flows through the Stripe processor:
+
+1. RefundKit validates the transaction ID against Stripe to confirm it is a valid, paid, non-refunded charge.
+2. The refund is created in Stripe via the Refunds API with the correct amount, currency, and reason mapping.
+3. RefundKit tracks the Stripe refund ID (`re_xxx`) and polls for status updates.
+4. The refund status is updated in RefundKit as Stripe processes it.
+
+## Connecting Stripe
+
+### Via the Dashboard
+
+1. Go to [app.refundkit.dev](https://app.refundkit.dev) and navigate to **Settings** > **Processors**.
+2. Click **Connect Stripe**.
+3. Enter your Stripe secret key (`sk_test_` for sandbox or `sk_live_` for production).
+4. RefundKit validates the key by making a test API call and saves it securely.
+
+### Via the SDK (Server-Side)
+
+The `StripeProcessor` class can be used directly in custom integrations:
+
+```typescript
+import { StripeProcessor } from '@refundkit/sdk';
+
+const stripe = new StripeProcessor('sk_test_your_stripe_secret_key');
+
+// Validate a charge before refunding
+const txn = await stripe.validateTransaction('ch_1N4HbSKz9cXRvFYr');
+console.log('Valid:', txn.valid);       // true if paid and not already refunded
+console.log('Amount:', txn.amount);     // Amount in cents
+console.log('Currency:', txn.currency); // e.g., 'usd'
+
+// Process a refund directly
+const result = await stripe.processRefund({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,
+  currency: 'usd',
+  reason: 'product_defective',
+});
+console.log('Stripe refund ID:', result.externalRefundId); // 're_xxx'
+console.log('Status:', result.status);                     // 'completed' | 'processing'
+```
+
+## Credential Format
+
+| Field | Value | Description |
+|-------|-------|-------------|
+| Processor name | `stripe` | Used in `CreateRefundParams.processor` and filter queries |
+| Secret key (test) | `sk_test_...` | Stripe test mode secret key |
+| Secret key (live) | `sk_live_...` | Stripe live mode secret key |
+
+Always use test keys (`sk_test_`) with RefundKit test keys (`rk_test_`) and live keys (`sk_live_`) with RefundKit live keys (`rk_live_`). Mixing environments will result in errors.
+
+## Reason Mapping
+
+RefundKit reason codes are mapped to Stripe's accepted refund reasons:
+
+| RefundKit Reason | Stripe Reason |
+|------------------|---------------|
+| `duplicate_charge` | `duplicate` |
+| `product_not_received` | `requested_by_customer` |
+| `product_defective` | `requested_by_customer` |
+| `wrong_product` | `requested_by_customer` |
+| `subscription_cancelled` | _(none -- omitted)_ |
+| `other` | _(none -- omitted)_ |
+
+When Stripe does not have an equivalent reason, the reason parameter is omitted from the Stripe API call.
+
+## Status Mapping
+
+Stripe refund statuses are mapped to RefundKit statuses:
+
+| Stripe Status | RefundKit Status |
+|---------------|-----------------|
+| `succeeded` | `completed` |
+| `pending` | `processing` |
+| `failed` | `failed` |
+| `canceled` | `failed` |
+| _(other)_ | `pending` |
+
+## Transaction Validation
+
+Before processing a refund, the Stripe processor validates the charge:
+
+- The charge must exist in Stripe.
+- The charge must be in a `paid` state (`charge.paid === true`).
+- The charge must not already be fully refunded (`charge.refunded === false`).
+
+If validation fails, the refund creation returns an error with code `processor_error`.
+
+## Error Handling
+
+Stripe API errors are wrapped in `RefundKitError` with code `processor_error`:
+
+```typescript
+const { data, error } = await rk.refunds.create({
+  transactionId: 'ch_invalid',
+  amount: 1000,
+  reason: 'other',
+});
+
+if (error?.code === 'processor_error') {
+  console.log('Stripe error:', error.message);
+  // e.g., "No such charge: ch_invalid"
+}
+```
+
+## Next Steps
+
+- [Quickstart](/docs/getting-started/quickstart) -- Process your first refund.
+- [Coming Soon](/docs/processors/coming-soon) -- PayPal, Square, and Adyen integrations.

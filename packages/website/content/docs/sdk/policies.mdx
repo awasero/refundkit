@@ -1,0 +1,116 @@
+---
+title: "Policies"
+description: "Check refund eligibility against your configured policies before processing refunds with the RefundKit SDK."
+order: 14
+---
+
+# Policies
+
+The `rk.policies` namespace lets you check whether a transaction is eligible for a refund before attempting to create one. Policy checks evaluate your configured rules -- such as time limits, maximum refund amounts, and transaction conditions -- and return a definitive eligibility result.
+
+## Why Check Policies First
+
+Creating a refund without checking policies can lead to rejected requests and unnecessary error handling. By calling `rk.policies.check()` first, you can:
+
+- Display eligibility status to customers before they submit a refund request.
+- Show the maximum refundable amount in your UI.
+- Provide clear reasons when a refund is not allowed.
+- Reduce failed refund attempts and improve user experience.
+
+## Check Eligibility
+
+Pass the `transactionId` to evaluate against your policies. You can optionally include an `amount` to verify that the specific refund amount is permitted.
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.policies.check({
+  transactionId: 'txn_abc123',
+});
+
+if (error) {
+  console.error('Policy check failed:', error.message);
+  return;
+}
+
+if (data.eligible) {
+  console.log('Eligible for refund up to', data.maxAmount, 'cents');
+} else {
+  console.log('Not eligible:', data.reason);
+}
+```
+
+## Check with a Specific Amount
+
+When you already know the requested refund amount, pass it along to validate that the amount falls within policy limits.
+
+```typescript
+const { data, error } = await rk.policies.check({
+  transactionId: 'txn_abc123',
+  amount: 5000, // $50.00 in cents
+});
+
+if (data && !data.eligible) {
+  // Might return: "Requested amount exceeds maximum refundable amount of 3000"
+  console.log(data.reason);
+}
+```
+
+## Policy Check Response
+
+The policy check response includes the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eligible` | `boolean` | Whether the transaction can be refunded |
+| `maxAmount` | `number` | Maximum refundable amount in smallest currency unit |
+| `reason` | `string \| null` | Explanation when `eligible` is `false` |
+
+## Common Ineligibility Reasons
+
+Policies may reject a refund for several reasons:
+
+- **Time window expired** -- The refund request is outside the allowed timeframe.
+- **Amount exceeds limit** -- The requested amount is greater than the maximum allowed.
+- **Already refunded** -- The transaction has already been fully refunded.
+- **Transaction not found** -- The transaction ID does not match any known transaction.
+
+## Full Flow Example
+
+Combining policy checks with refund creation:
+
+```typescript
+async function safeRefund(transactionId: string, amount: number) {
+  const { data: policy, error: policyError } = await rk.policies.check({
+    transactionId,
+    amount,
+  });
+
+  if (policyError) {
+    return { success: false, error: policyError.message };
+  }
+
+  if (!policy.eligible) {
+    return { success: false, error: policy.reason };
+  }
+
+  const { data: refund, error: refundError } = await rk.refunds.create({
+    transactionId,
+    amount,
+    reason: 'customer_request',
+  });
+
+  if (refundError) {
+    return { success: false, error: refundError.message };
+  }
+
+  return { success: true, refundId: refund.id };
+}
+```
+
+## Next Steps
+
+- [Error Handling](/docs/sdk/error-handling) -- Handle errors from policy checks and refunds.
+- [API Reference: Policy Check](/docs/api-reference/policies-check) -- REST API details for policy checks.

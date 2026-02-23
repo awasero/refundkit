@@ -1,0 +1,227 @@
+---
+title: "MCP Tools Reference"
+description: "Complete reference for all five RefundKit MCP tools: process_refund, check_refund_status, list_refunds, get_policy, and cancel_refund."
+order: 3
+---
+
+# MCP Tools Reference
+
+The RefundKit MCP server exposes five tools that AI agents can discover and call. Each tool validates inputs with Zod schemas before executing.
+
+## refundkit_process_refund
+
+Initiate a refund for a transaction through the configured payment processor.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `transactionId` | `string` | Yes | The payment processor transaction ID (e.g., Stripe charge ID `ch_xxx`) |
+| `amount` | `number` | Yes | Refund amount in the smallest currency unit (e.g., cents for USD) |
+| `reason` | `string` | Yes | One of: `product_not_received`, `product_defective`, `wrong_product`, `duplicate_charge`, `subscription_cancelled`, `other` |
+| `currency` | `string` | No | Three-letter ISO currency code (default: `usd`) |
+
+**Example call:**
+
+```json
+{
+  "name": "refundkit_process_refund",
+  "arguments": {
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "reason": "product_defective",
+    "currency": "usd"
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "ref_abc123",
+  "transactionId": "ch_1N4HbSKz9cXRvFYr",
+  "amount": 2500,
+  "currency": "usd",
+  "reason": "product_defective",
+  "status": "processing",
+  "processor": "stripe",
+  "initiatedBy": "mcp",
+  "createdAt": "2026-02-22T10:30:00Z",
+  "updatedAt": "2026-02-22T10:30:00Z"
+}
+```
+
+---
+
+## refundkit_check_refund_status
+
+Check the current status of a refund by its ID.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `refundId` | `string` | Yes | The RefundKit refund ID (e.g., `ref_abc123`) |
+
+**Example call:**
+
+```json
+{
+  "name": "refundkit_check_refund_status",
+  "arguments": {
+    "refundId": "ref_abc123"
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "ref_abc123",
+  "status": "completed",
+  "amount": 2500,
+  "currency": "usd",
+  "processor": "stripe",
+  "externalRefundId": "re_1N4HcTKz9cXRvFYs",
+  "updatedAt": "2026-02-22T10:32:00Z"
+}
+```
+
+---
+
+## refundkit_list_refunds
+
+List refunds with optional filters for status, processor, and pagination.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `status` | `string` | No | Filter by status: `pending`, `processing`, `completed`, `failed`, `cancelled` |
+| `processor` | `string` | No | Filter by payment processor name (e.g., `stripe`) |
+| `limit` | `number` | No | Maximum number of results (default: 25, max: 100) |
+| `offset` | `number` | No | Pagination offset (default: 0) |
+
+**Example call:**
+
+```json
+{
+  "name": "refundkit_list_refunds",
+  "arguments": {
+    "status": "completed",
+    "limit": 10
+  }
+}
+```
+
+**Response:**
+
+```json
+[
+  {
+    "id": "ref_abc123",
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500,
+    "status": "completed",
+    "processor": "stripe",
+    "createdAt": "2026-02-22T10:30:00Z"
+  },
+  {
+    "id": "ref_def456",
+    "transactionId": "ch_2M3GaSJy8bWqEXQp",
+    "amount": 4999,
+    "status": "completed",
+    "processor": "stripe",
+    "createdAt": "2026-02-21T14:15:00Z"
+  }
+]
+```
+
+---
+
+## refundkit_get_policy
+
+Check the refund policy for a specific transaction. Returns eligibility, conditions, and deadlines.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `transactionId` | `string` | Yes | The transaction ID to check policy for |
+| `amount` | `number` | No | Optional refund amount to validate against policy limits |
+
+**Example call:**
+
+```json
+{
+  "name": "refundkit_get_policy",
+  "arguments": {
+    "transactionId": "ch_1N4HbSKz9cXRvFYr",
+    "amount": 2500
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "eligible": true,
+  "reason": "Transaction is within the 30-day refund window",
+  "maxAmount": 5000,
+  "deadline": "2026-03-22T10:30:00Z",
+  "conditions": [
+    "Refund must be requested within 30 days of purchase",
+    "Maximum refund amount is the original transaction amount"
+  ]
+}
+```
+
+---
+
+## refundkit_cancel_refund
+
+Cancel a pending refund. Only refunds in `pending` or `processing` status can be cancelled. Completed or failed refunds cannot be cancelled.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `refundId` | `string` | Yes | The RefundKit refund ID to cancel |
+
+**Example call:**
+
+```json
+{
+  "name": "refundkit_cancel_refund",
+  "arguments": {
+    "refundId": "ref_abc123"
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "ref_abc123",
+  "status": "cancelled",
+  "amount": 2500,
+  "updatedAt": "2026-02-22T10:35:00Z"
+}
+```
+
+## Error Handling
+
+When a tool call fails, the MCP server returns an error response with `isError: true`:
+
+```json
+{
+  "content": [{ "type": "text", "text": "Error: Refund not found" }],
+  "isError": true
+}
+```
+
+AI agents should handle these errors gracefully and communicate the failure to the user in natural language. Common error scenarios include invalid transaction IDs, policy violations, and attempting to cancel a completed refund.

@@ -1,0 +1,105 @@
+---
+title: "Refunds"
+description: "Create, retrieve, list, and cancel refunds using the RefundKit SDK. Full CRUD operations with TypeScript examples."
+order: 13
+---
+
+# Refunds
+
+The `rk.refunds` namespace provides methods for the full refund lifecycle: creating new refunds, retrieving individual refunds, listing refunds with filters, and cancelling pending refunds.
+
+## Create a Refund
+
+Use `rk.refunds.create()` to initiate a refund against a payment processor transaction. Amounts are specified in the smallest currency unit (cents for USD, pence for GBP).
+
+```typescript
+import RefundKit from '@refundkit/sdk';
+
+const rk = new RefundKit({ apiKey: process.env.REFUNDKIT_API_KEY! });
+
+const { data, error } = await rk.refunds.create({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+  amount: 2500,            // $25.00 in cents
+  reason: 'product_defective',
+});
+
+if (error) {
+  console.error('Refund failed:', error.message);
+} else {
+  console.log('Refund ID:', data.id);       // 'ref_xyz789'
+  console.log('Status:', data.status);       // 'pending'
+}
+```
+
+The `reason` field accepts any string. Common values include `duplicate_charge`, `product_defective`, `customer_request`, and `other`.
+
+## Get a Refund
+
+Retrieve a single refund by its ID to check its current status or inspect its details.
+
+```typescript
+const { data, error } = await rk.refunds.get('ref_xyz789');
+
+if (data) {
+  console.log('Status:', data.status);
+  // 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+}
+```
+
+## List Refunds
+
+Retrieve multiple refunds with optional filters. This is useful for building dashboards or generating reports.
+
+```typescript
+// List all refunds
+const { data, error } = await rk.refunds.list();
+
+// Filter by status
+const { data: pending } = await rk.refunds.list({ status: 'pending' });
+
+// Filter by transaction
+const { data: txnRefunds } = await rk.refunds.list({
+  transactionId: 'ch_1N4HbSKz9cXRvFYr',
+});
+```
+
+The response `data` is an array of refund objects. Each object contains `id`, `transactionId`, `amount`, `reason`, `status`, and timestamp fields.
+
+## Cancel a Refund
+
+Cancel a refund that has not yet been processed. Only refunds with a `pending` status can be cancelled.
+
+```typescript
+const { data, error } = await rk.refunds.cancel('ref_xyz789');
+
+if (error) {
+  console.error('Cannot cancel:', error.message);
+  // e.g., "Refund is already completed and cannot be cancelled"
+} else {
+  console.log('Cancelled:', data.status); // 'cancelled'
+}
+```
+
+## Response Shape
+
+Every method returns a `{ data, error }` tuple. Exactly one of `data` or `error` will be non-null:
+
+```typescript
+const { data, error } = await rk.refunds.create({ ... });
+
+if (error) {
+  // error is a RefundKitError with message, code, and statusCode
+  console.error(error.code, error.message);
+  return;
+}
+
+// data is the refund object
+console.log(data.id);
+```
+
+This pattern eliminates the need for try/catch blocks and makes error handling explicit at every call site.
+
+## Next Steps
+
+- [Policies](/docs/sdk/policies) -- Check refund eligibility before creating refunds.
+- [Error Handling](/docs/sdk/error-handling) -- Understand error codes and recovery strategies.
